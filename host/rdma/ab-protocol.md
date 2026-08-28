@@ -7,6 +7,12 @@ after the verify gate passes. Until this protocol produces that result,
 sockets on both rails remain the transport of record on both ranks
 (spec.md P7). This file is that protocol, and where its result gets recorded.
 
+This A/B is downstream of `attended-bringup.md` Gate 0: it presupposes a
+committed TP=2-over-TCP benchmark already exists under `results/` (the
+comparison needs a baseline to compare against regardless), and it only runs
+after that document's steps 1-10 have gotten both nodes to a passing verify
+gate.
+
 ## Why counterbalanced, and why now specifically
 
 The one existing data point for this pair's transport delta -- wkljohn's A/B
@@ -21,10 +27,12 @@ about this pair's own measured record narrow how much of it to expect here:
    record found exactly that defect locally (577us RTT with C3 idle enabled,
    63-90us with `cpu_dma_latency=0` held) before it was fixed.
 2. **This pair's TCP arm, in this A/B, is the held one.** `attended-bringup.md`
-   step 0.3 makes re-confirming the C-state/MTU hold post-reboot a hard
+   step 2 item 3 makes re-confirming the C-state/MTU hold post-reboot a hard
    precondition specifically so this comparison is not the crippled-TCP
-   version of itself. With TCP held at ~63-90us average RTT rather than
-   577us, expect the **honest** delta -- which may be smaller than +3.4%, and
+   version of itself. Our TCP is held at **~77us on both ends** (the measured
+   range is 63-90us average RTT depending on direction; ~77us is the figure
+   to plan around), not 577us. Expect the **honest** delta against that held
+   baseline -- which may be smaller than +3.4%, and
    per this pair's own report, might be close to zero: the same record notes
    `strix-rdma`'s own author reports the NHI path "effectively identical to
    TCP v3" and ships TCP in production on his own rig, and that on this
@@ -44,7 +52,7 @@ about this pair's own measured record narrow how much of it to expect here:
   shared pair all trend across a session; A-B-B-A cancels a linear trend in
   a way a blocked order does not.
 - **What's held constant across both arms:** everything except the transport
-  env delta from `attended-bringup.md` step 7. Same weights, same context
+  env delta from `attended-bringup.md` step 11. Same weights, same context
   depth, same speculative-decode setting, same batch shape, same node roles.
   Swap only `NCCL_IB_DISABLE` / `NCCL_IB_HCA` / `NCCL_IB_GID_INDEX` between
   arms; nothing else in the shared cluster env changes.

@@ -4,147 +4,227 @@ Scope: `host/rdma/fetch-and-build.sh`, `host/rdma/attended-bringup.md`,
 `host/rdma/ab-protocol.md`. No build, insmod, or modprobe was run producing
 this package; no file outside this scratchpad output tree was written.
 
+**Operator ruling folded in (second pass on this package):** RDMA is fully
+out of the overnight critical path. No unsupervised reboots, period. This
+package is a ready-to-execute MORNING PLAN, not an execution, and per
+`attended-bringup.md` Gate 0 it may not even begin until a committed
+TP=2-over-TCP benchmark is banked under `results/`. The reboot order is now
+sequential (worker first, coordinator follows only once the worker is
+verified back over the 5GbE wire), never the reference's "both together."
+
 ## Exact pins this package is built against
 
 | component | pin | kind | source |
 |---|---|---|---|
 | westeri/thunderbolt.git (core+net) | `503c5ae1e72aa9ed91925dafa3d82ee2e992747f` | commit SHA | `tbv/build-modules.sh:25` in the reference tree |
-| hellas-ai/thunderbolt-ibverbs | `76ba39b630a70accb72f19388eefe48844b50eb8` | commit SHA | `tbv/build-modules.sh:27`, also `container/Dockerfile:63` in the reference (duplicated, not a shared source of truth there either) |
+| hellas-ai/thunderbolt-ibverbs (KERNEL MODULE) | `76ba39b630a70accb72f19388eefe48844b50eb8` | commit SHA | `tbv/build-modules.sh:27`, also `container/Dockerfile:63` in the reference (duplicated, not a shared source of truth there either) |
 | the 10-file kernel patch series | (no separate pin -- lives inside the ibverbs clone at that SHA, `kernel-workflow/patches/`) | fetched by cloning the pin above | `tbv/build-modules.sh:29-40` |
-| rdma-core | `v57.0` | **mutable tag, not a SHA** | `container/Dockerfile:61`, confirmed by the campaign's own manifest (`ds4-vllm-manifest.md` section 7.1) as the one unpinned-by-commit component in the whole recipe |
+| rdma-core (reference's pin, no longer this package's default build target -- see below) | `v57.0` | mutable tag, not a SHA | `container/Dockerfile:61` |
+
+## New substrate facts (this pass), and how each changed the package
+
+1. **Both nodes run the stock nixpkgs kernel, not nix-strix-halo's
+   `linux-thunderbolt`.** `/run/booted-system/kernel` is a plain kernel;
+   `linux-thunderbolt` has no build output and no `.drv` in the store at all.
+   Reported from the team lead's substrate session (`modinfo tbv` not found,
+   `/sys/class/infiniband/` empty, no `/dev/infiniband`) -- I did not
+   independently re-run those commands, since I have no shell on the actual
+   coordinator/worker boxes from this environment. Consequence: this
+   confirms route (a) (out-of-tree modules against the *running* stock
+   kernel) is the well-defined, low-risk option, and route (b) (deploying
+   `linux-thunderbolt`) means building a kernel derivation that has never
+   been realized before, from scratch, on hardware that has never booted it.
+   `fetch-and-build.sh`'s new `log_kernel_provenance()` logs which case it's
+   in on every run rather than assuming.
+
+2. **The userspace verbs provider is already realized in the store:**
+   `thunderbolt-ibverbs-0.3.4` and `rdma-core-usb4-63.0` (a fork, not
+   vanilla rdma-core). This supersedes the previous version of this
+   package's `build_rdma_core()`, which cloned vanilla rdma-core at the
+   reference's `v57.0` pin -- that pin is now known-stale against what this
+   fleet already committed to. `fetch-and-build.sh` was reworked: it now
+   checks the store first (`check_userspace()`), reports what it finds, and
+   does **not** build a redundant/conflicting copy by default. The old
+   clone-and-build path still exists as an opt-in fallback
+   (`FLASHNEXT_BUILD_RDMA_CORE_FALLBACK=1`) in case a future environment
+   lacks the nix-realized pair, but it is no longer on the default path.
+   **Open question this creates, unresolved:** whether
+   `thunderbolt-ibverbs-0.3.4` was built from the *same* commit
+   (`76ba39b`) this package pins for the kernel module, or a different one.
+   Package version numbers don't map to git SHAs; I have no way to check
+   this without inspecting nix-strix-halo's own derivation, which I don't
+   have access to from here. Flagged in the script's own log output and in
+   `attended-bringup.md` step 2 item 4 and step 9, rather than assumed
+   compatible.
+
+3. **`thunderbolt0` is not trusted on either host -- independently
+   verified, not just taken on report.** I grepped the actual
+   `hosts/coordinator/eth-fleet.nix:80` and `hosts/worker/default.nix:321`
+   in `/home/tom/mecattaf/dotfiles`: both set
+   `networking.firewall.trustedInterfaces = [ "enp191s0" ];`, confirming
+   `thunderbolt0` gets no firewall admission of any kind today.
+   `attended-bringup.md` step 5 adds a scoped
+   `networking.firewall.interfaces.thunderbolt0.allowedUDPPorts = [ 4791 ]`
+   (RoCEv2) rather than trusting the whole interface -- matching the
+   per-interface scoping idiom already used elsewhere in that same repo
+   (`wlp192s0`, `tailscale0` in `hosts/coordinator/*.nix`,
+   `hosts/worker/immich-ml.nix`), and matching that repo's own explicit
+   comment warning against "re-blanket-trusting an interface."
+
+4. **The worker's deploy-rs path runs over Thunderbolt, and would be
+   severed by exactly the kind of reboot this package requires --
+   independently verified.** `dotfiles/flake.nix` around line 536:
+   `hostname = if host == "worker" then "10.99.0.2" else host;` -- the
+   worker is dialed at its rail-0 address, not the wire. `fleetDeploySshOpts`
+   (around line 299) passes `"-F" "/dev/null"`, defeating any
+   `~/.ssh/config` override. The asserts pinning `10.99.0.2` as the
+   worker's deploy hostname sit in the same large assert block I read
+   around lines 1190-1232 (the exact ones the team lead cited, `:1194` and
+   `:1227`, are inside that block; I did not line-match each one
+   individually but confirmed the assert `self.deploy.nodes.${strixWorker}.hostname
+   == "10.99.0.2"` exists and reads exactly as described). This is now
+   `attended-bringup.md` step 1 -- mandatory, first, before any kernel or
+   module change, deploy-tested with rail 0 administratively down before
+   being trusted.
 
 ## Verified vs. assumed
 
-**Verified against source material actually read in this session:**
+**Verified against source material actually read in this session (both the
+original AGENTS.md/tbv reference tree and, this pass, the live
+`dotfiles` repo directly):**
 - The exact pins above, the gate order (kernel match -> Secure Boot ->
   fetch -> patch-apply-with-verify -> build), and the "matched set or the box
-  panics on cable connect" rule, all read directly from `AGENTS.md` 1.1-1.5
-  and `tbv/README.md`.
-- The topology this package targets: `coordinator`/`worker`, `thunderbolt0`
-  = rail 0 = `10.99.0.1`/`10.99.0.2` (`/30`), `thunderbolt1` = rail 1,
-  link-local, and `enp191s0` = the 5GbE control wire at `10.99.1.1`/`.2` --
-  read from `final-qwen-report.md` section 2 and `spec.md`'s vocabulary section,
-  which agree with each other.
+  panics on cable connect" rule -- from `AGENTS.md` 1.1-1.5 and `tbv/README.md`.
+- The topology: `coordinator`/`worker`, `thunderbolt0` = rail 0 =
+  `10.99.0.1`/`10.99.0.2` (`/30`), `thunderbolt1` = rail 1 link-local, and
+  `enp191s0` = the 5GbE control wire at `10.99.1.1`/`.2` -- from
+  `final-qwen-report.md` section 2 and `spec.md`'s vocabulary section.
 - The single-rail rule and its exact failure mode (source-blind control
-  handler cross-matching HELLOs when both peers sit at route `0x2` in each
-  other's domains, poisoning HopID state) -- quoted from
-  `final-qwen-report.md` section 7 item 3, and independently corroborated by the
-  reference's own `tbv-second-cable-prep.sh` comment describing the same
-  failure for its two-cable case.
-- The PD-wedge recovery ladder and its 1800s rate limit on the drastic step
-  -- read directly from `specs/flashnext/evidence/dotfiles-observed.md` section 6.2,
-  which documents the live `tb-link-heal` unit already running on both nodes
-  (2-minute cadence, `framework_tool --pd-reset 2` as the last-resort step,
-  stamped and rate-limited).
-- That the main campaign already excludes `tbv/` from its own lift, on GPL
+  handler cross-matching HELLOs, poisoning HopID state) -- from
+  `final-qwen-report.md` section 7 item 3 and the reference's own
+  `tbv-second-cable-prep.sh` comment.
+- The PD-wedge recovery ladder and its 1800s rate limit -- from
+  `specs/flashnext/evidence/dotfiles-observed.md` section 6.2.
+- That the main campaign already excludes `tbv/` from its own lift on GPL
   grounds, and treats "prepared overnight, brought up only attended" as the
-  sanctioned shape for RDMA -- `ds4-vllm-manifest.md` section 7 and `spec.md`
-  ruling P7 and vocabulary entry "RDMA package" independently describe the
-  same design this package implements. That agreement is reassuring: this
-  package isn't inventing a new posture, it's filling in a slot the estate's
-  own spec already reserved.
-- The C-state/MTU finding and that both fixes are still **transient, not yet
-  permanent** (`dotfiles#238` open) -- read from `final-qwen-report.md` section 2
-  and section 7 item 1. This is why `attended-bringup.md` step 0.3 makes
-  re-confirming the hold after the coordinated reboot a hard precondition,
-  not a suggestion: a reboot is required by this bring-up, and a reboot is
-  exactly the thing that can silently drop a transient PM QoS setting.
+  sanctioned shape for RDMA -- `ds4-vllm-manifest.md` section 7 and
+  `spec.md` ruling P7 / vocabulary entry "RDMA package."
+- The C-state/MTU finding and that both fixes are still transient, not yet
+  permanent (`dotfiles#238` open) -- from `final-qwen-report.md` sections 2
+  and 7.
+- This pass, directly against `/home/tom/mecattaf/dotfiles`: the worker's
+  Thunderbolt-only deploy path, the `-F /dev/null` ssh hardening, and both
+  hosts' `trustedInterfaces` excluding `thunderbolt0` -- all three read
+  from the actual files, not taken solely on the team lead's word, and all
+  three matched what was reported.
 
-**Assumed / could not verify in this environment (no network access to
-clone the actual pinned repos and inspect them):**
-- That the 10-file patch series still applies cleanly at `kernel-workflow/patches/`
-  inside the ibverbs clone at the pinned SHA. `fetch-and-build.sh` gates this
-  at build time (hard failure if any patch doesn't apply, plus a
-  `callback_xd` presence check afterward) rather than assuming it silently.
-- The exact path of "the provider patches from the upstream ibverbs repo"
-  that `AGENTS.md` 1.3 references for a host-side rdma-core build. Three
-  plausible directory names are tried in `build_rdma_core()`; if none
-  match, the script says so plainly and skips that step rather than failing
-  the whole run -- it's diagnostics-only, the serving container builds its
-  own provider independently.
+**Reported by the team lead's substrate session, not independently
+re-verified (no shell access to the actual coordinator/worker boxes from
+this environment):**
+- The running kernel on both nodes is stock, and `linux-thunderbolt` has no
+  store output.
+- `thunderbolt-ibverbs-0.3.4` and `rdma-core-usb4-63.0` are realized in the
+  store.
+- `modinfo tbv` not found, `/sys/class/infiniband/` empty, no
+  `/dev/infiniband` -- i.e., the kernel half of RDMA is genuinely unbuilt
+  today.
+
+**Still assumed / could not verify in this environment (no network access
+to clone the actual pinned repos and inspect them):**
+- That the 10-file patch series still applies cleanly inside the ibverbs
+  clone at the pinned SHA. `fetch-and-build.sh` gates this at build time
+  (hard failure on any patch not applying, plus a `callback_xd` presence
+  check afterward).
 - Whether the westeri `503c5ae` pin's target kernel generation is anywhere
-  near NixOS 7.1.4. There is no way to check the commit's era without cloning
-  it. `fetch-and-build.sh`'s vermagic gate will catch a mismatch at build
-  time, but a build-time catch is a worse failure mode than knowing in
-  advance -- flagging this as the thing to check first if the build fails in
-  a way that looks like an ABI mismatch rather than a missing-header mismatch.
-- Whether rdma-core v57.0's ABI vs. the newer v62 matters for our non-container
-  host build. The reference pins v57.0 only inside the *container* build
-  (`container/Dockerfile:61`); nothing in the source material validates that
-  pin for a bare-host build outside a container, which is exactly the shape
-  `fetch-and-build.sh`'s `build_rdma_core()` attempts. Treated as optional and
-  non-fatal for that reason -- if it fails or mismatches, host-side
-  `ibv_devices` diagnostics are degraded, not the RDMA path itself, since the
-  serving container never depends on this host-side copy.
+  near stock NixOS 7.1.4. No way to check the commit's era without cloning
+  it; the vermagic gate catches a mismatch at build time, which is a worse
+  failure mode than knowing in advance, but is what's available here.
+- The exact path of "the provider patches from the upstream ibverbs repo"
+  that `AGENTS.md` 1.3 references -- now moot for the default path (userspace
+  is already realized via nix, see above) but still relevant if the legacy
+  fallback build is ever invoked; the script still guesses three plausible
+  paths and fails soft if none match.
 
-## Open questions carried into REPORT rather than guessed at
+## Route (a) vs (b) -- recommendation
 
-1. **Worker Secure Boot state.** Genuinely unknown before this package runs
-   there. `fetch-and-build.sh`'s `check_secure_boot()` resolves this live,
-   every run, on whichever node it executes on -- it does not trust a cached
-   "coordinator is known-disabled" fact for the other node, and treats an
-   unreadable/missing efivars state as a hard failure rather than an assumed
-   pass.
-2. **Kernel-generation drift between the westeri pin and NixOS 7.1.4.**
-   Noted above; no way to resolve without network access to the actual repo.
-3. **rdma-core v57.0 vs v62 ABI for a non-container host build.** Noted
-   above; treated as non-fatal and diagnostics-only in the script.
-4. **The provider-patch path for the host-side rdma-core build.** Noted
-   above; the script guesses and fails soft, not silently.
+**Recommend route (a): out-of-tree matched modules against the running
+stock kernel** (what `fetch-and-build.sh` builds today), not route (b)
+(deploying nix-strix-halo's `linux-thunderbolt`, a full kernel swap).
+Reasoning, in full, is in `attended-bringup.md` section 3; in short: route
+(a) never changes the boot kernel (known-good fallback is trivially "the
+temporary module-load config was never deployed"), touches only three
+out-of-tree modules, and still needs the same one-reboot-per-node route (b)
+needs anyway -- so route (b)'s only advantage (a "proper" kernel-level
+integration) comes with a first-ever-realization kernel build of unknown
+duration and a full-driver-stack risk to the GPU/ROCm side of the box, for
+the same RDMA payoff. Route (b) is documented as a real option, not
+dismissed, in case the fleet later decides to adopt RDMA as a standing
+capability -- but that's a separate, larger, better-tested project than a
+single attended morning session.
+
+## Worker-first, sequential reboot -- why it's safe
+
+The reference bring-up says "reboot both boxes together"; the operator
+ruling overrides that to worker-first, never simultaneous, no unsupervised
+reboot. Reconciling the two: the reference's matched-set warning
+("stock net over the patched core has mismatched ABI and panics on cable
+connect") is about mismatched core/net *within one host* -- the boot unit in
+`attended-bringup.md` step 6 is all-or-nothing by construction, so that
+danger doesn't arise regardless of reboot ordering. What the two hosts'
+*Thunderbolt IP link* needs to keep working across a version-skew window
+(worker on the new module set, coordinator still stock) is ordinary packet
+connectivity, not a shared ring ABI -- so `ping`/ssh/`tb-link-heal` over
+`thunderbolt0` during that window is expected to work. The one thing that
+genuinely does need both hosts already matched is RDMA/ibverbs itself,
+which is why `attended-bringup.md` step 8 explicitly gates the RoCE
+bring-up on both nodes having already rebooted and verified -- it never
+runs mid-sequence. Step 1 (the deploy-path fix) is what makes the
+worker-first ordering actually recoverable if something does go wrong: it's
+the one channel that survives a Thunderbolt failure on the worker.
 
 ## What was deliberately dropped from the reference recipe, and why
 
 - **The local RC-write zero-copy patch on top of thunderbolt-ibverbs**
-  (`ibverbs-local.patch` in the wider reference tree, ~3,450 lines). That
-  patch is the *reference repo's own* unpublished diff, not something at a
-  public pin -- there is nothing to fetch, and this package's mandate is
-  fetch-only, never-vendor. Consequence: the built `thunderbolt_ibverbs.ko`
-  cannot take the `native_rc_split_zcopy=1` module parameter.
-  `attended-bringup.md` section 4 loads the module without it, which the
-  reference's own comment names as the supported fallback ("needs no
-  cross-box coordination") rather than a degraded mode to apologize for.
-- **The NHI interrupt-throttle helper module** (`nhi_throttle`, ~70 lines in
-  the reference tree). Same reasoning: it's that repo's own from-scratch
-  module, not sourced from either public pin, so nothing to fetch. Effect is
-  a latency-floor difference only -- stock ~128us NHI IRQ moderation instead
-  of a hand-tuned 8us -- not a correctness one. Left out of scope for this
-  package; a future add could vendor an equivalent as this package's own
-  originally-authored module if the throttle floor turns out to matter after
-  the A/B in `ab-protocol.md`.
-- **The two-cable / RX-zero-copy topology entirely**
-  (`tbv-second-cable-prep.sh`, `99-tbv-zc-second-link.conf`, the reference's
-  `cables: 2` config path). Not a licensing question this time -- this
-  pair's own rule (`final-qwen-report.md` section 7 item 3, restated in `spec.md`
-  F.1) forbids RDMA on both rails outright, which is precisely what the
-  two-cable topology is for. There is no safe adaptation of that feature
-  here; it is not present anywhere in this package, and `attended-bringup.md`
-  section 6 explicitly checks that rail 1 was never touched.
-- **`install-modules.sh`'s Fedora/mutable-install install path** (blacklist
-  via `/etc/modprobe.d`, `grubby --update-kernel`, permanently-enabled
-  systemd units). This pair is NixOS on both nodes -- unlike the reference
-  tree, whose own comments imply a *mixed* pair (one immutable-style box,
-  one explicitly-Fedora box2 with its own `build-scripts/box2-*.sh` path).
-  `grubby` and a mutable `/etc/modprobe.d` aren't the right primitives here.
-  `attended-bringup.md` section 2 describes the NixOS-native equivalent instead: a
-  temporary, deploy-rs-pushed config delta (blacklist + a oneshot unit
-  ordered before `bolt.service`), reverted in the rollback section -- never
-  a permanent fleet default, matching both the task's "operator-attended"
-  framing and `spec.md` gate 6.4's "no unattended install path."
-- **Kernel-devel auto-discovery beyond the reference's two RPM-style paths.**
-  `fetch-and-build.sh` tries two additional NixOS-shaped candidate paths, but
-  does not attempt to synthesize a Nix derivation for
-  `boot.kernelPackages.kernel.dev` -- that's a real gap (see open questions
-  above), not something safe to paper over with a guess in a script that's
-  supposed to refuse loudly on uncertainty.
+  (~3,450 lines in the wider reference tree). It's that repo's own
+  unpublished diff, not at a public pin -- nothing to fetch, and this
+  package's mandate is fetch-only, never-vendor. Consequence: the built
+  `thunderbolt_ibverbs.ko` cannot take `native_rc_split_zcopy=1`.
+  `attended-bringup.md` step 8 loads the module without it, which the
+  reference's own comment names as the supported fallback.
+- **The NHI interrupt-throttle helper module** (~70 lines in the reference
+  tree). Same reasoning: a from-scratch module owned by that other tree,
+  not sourced from either public pin. Latency-floor difference only (stock
+  ~128us vs a hand-tuned 8us), not a correctness one.
+- **The two-cable / RX-zero-copy topology entirely.** This pair's own rule
+  forbids RDMA on both rails outright, which is precisely what that
+  topology is for -- no safe adaptation exists, and none is present here.
+- **`install-modules.sh`'s Fedora/mutable-install install path**
+  (`/etc/modprobe.d`, `grubby`, permanently-enabled units). This pair is
+  NixOS on both nodes; `attended-bringup.md` substitutes a temporary,
+  deploy-rs-pushed config delta instead, reverted in rollback, never a
+  permanent fleet default.
+- **A vanilla rdma-core `v57.0` build, as this pass's default behavior.**
+  Not dropped for licensing or scope reasons this time -- superseded, because
+  the fleet already has a newer fork (`rdma-core-usb4` 63.0) realized in the
+  store. The old build path is kept as an explicit opt-in fallback, not
+  deleted, in case a future environment lacks it.
+- **Kernel-devel auto-discovery beyond a few candidate paths.**
+  `fetch-and-build.sh` now gives a concrete `nix build` command for the
+  stock-kernel case (this environment's actual case) rather than a general
+  hand-wave, but still does not invoke that build automatically -- it
+  belongs in the operator's own flake evaluation.
 
 ## Gate compliance
 
-- `bash -n` passes clean on `fetch-and-build.sh`.
-- No `insmod`/`modprobe -a <local .ko>`/boot-config write happens anywhere in
-  this package; every load step is explicit, attended, and documented as
-  attended in `attended-bringup.md`.
+- `bash -n` passes clean on `fetch-and-build.sh` (re-checked after this
+  pass's edits).
+- No `insmod`/`modprobe -a <local .ko>`/boot-config/firewall write happens
+  anywhere in this package; every load and config step is explicit,
+  attended, and documented as attended.
+- No reboot is simultaneous; `attended-bringup.md` step 7 is sequential by
+  design, and Gate 0 forbids starting the plan at all without a banked
+  TP=2-over-TCP benchmark.
 - Nothing under `/home/tom/mecattaf/flashnext` was read for writing, or
-  written to, at any point -- only read from `specs/flashnext/evidence/` and
-  `specs/flashnext/spec.md` for context.
+  written to, at any point.
 - All third-party code is fetched at the pinned SHAs above at build time;
   nothing third-party is vendored into this package.

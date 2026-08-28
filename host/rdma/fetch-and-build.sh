@@ -8,11 +8,23 @@
 # What this fetches and builds, and why:
 #   - westeri/thunderbolt.git @ BASE           -- patched thunderbolt core + net
 #   - hellas-ai/thunderbolt-ibverbs @ IBV_BASE -- the usb4_rdma verbs provider
+#     KERNEL MODULE only (thunderbolt_ibverbs.ko). This is the one piece of
+#     RDMA that is genuinely unpaid on this pair as of the last substrate
+#     check: the running kernel on both nodes is stock linux-7.1.4
+#     (/run/booted-system/kernel), not nix-strix-halo's linux-thunderbolt --
+#     that derivation has no output and no .drv in the store at all.
 #   - a 10-file kernel patch series that lives INSIDE the ibverbs clone
 #     (kernel-workflow/patches/), applied to the westeri tree with `git apply
 #     -C1` (matches the fuzz the series itself was cut against).
-#   - rdma-core @ v57.0, host-diagnostics build only (best-effort; see NOTE
-#     near build_rdma_core below).
+#
+# What this does NOT build, deliberately: the userspace verbs provider.
+# nix-strix-halo already has it realized in the store (thunderbolt-ibverbs
+# 0.3.4, paired with an rdma-core fork it calls rdma-core-usb4 at 63.0) --
+# building a second copy from the reference's v57.0 pin would just be a
+# stale, redundant, possibly-conflicting duplicate. See check_userspace()
+# below and REPORT.md for the open question that already-realized pair
+# leaves: whether it was built from the SAME thunderbolt-ibverbs commit this
+# script pins for the kernel module, or a different one.
 #
 # Deliberately NOT fetched -- see REPORT.md for the full reasoning:
 #   - no vendor's-own local patch on top of thunderbolt-ibverbs. One exists in
@@ -42,8 +54,15 @@ WESTERI_BASE=503c5ae1e72aa9ed91925dafa3d82ee2e992747f
 WESTERI_REMOTE=https://git.kernel.org/pub/scm/linux/kernel/git/westeri/thunderbolt.git
 IBV_BASE=76ba39b630a70accb72f19388eefe48844b50eb8
 IBV_REMOTE=https://github.com/hellas-ai/thunderbolt-ibverbs
+# The reference recipe's rdma-core pin (v57.0, container-only, mutable tag not
+# a SHA -- see REPORT.md). Kept only as the fallback build's target if the
+# operator explicitly opts into it; the default path does not clone or build
+# this at all, because nix-strix-halo already ships a newer, different fork
+# (rdma-core-usb4 63.0) in this fleet's own store. See check_userspace().
 RDMA_CORE_TAG=v57.0
 RDMA_CORE_REMOTE=https://github.com/linux-rdma/rdma-core
+NIX_USERSPACE_PROVIDER_GLOB='*thunderbolt-ibverbs-0.3.4*'
+NIX_USERSPACE_RDMACORE_GLOB='*rdma-core-usb4-63.0*'
 
 # The 10-file series lives at $IBVERBS_DIR/kernel-workflow/patches/ once the
 # ibverbs repo is cloned -- it is fetched, not vendored, by cloning that repo.
@@ -177,6 +196,28 @@ check_secure_boot() {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. informational: log which kernel we're actually building against. As of
+#     the last substrate check both nodes run the STOCK nixpkgs kernel, not
+#     nix-strix-halo's linux-thunderbolt fork (which has no build output in
+#     the store at all -- route (b) in attended-bringup.md would have to
+#     build it from scratch, first-ever realization, unknown duration and
+#     unknown breakage). This is informational, not a gate: if a future run
+#     finds linux-thunderbolt already booted, that's route (b) already
+#     landed, and this script's out-of-tree build below is then redundant
+#     (harmless, but redundant) rather than wrong.
+# ---------------------------------------------------------------------------
+log_kernel_provenance() {
+  local kpath
+  kpath=$(readlink -f /run/booted-system/kernel 2>/dev/null || echo "(unknown)")
+  case "$kpath" in
+    *thunderbolt*)
+      log "kernel provenance: $kpath -- looks like nix-strix-halo's patched kernel is ALREADY booted. Route (a)'s out-of-tree build below is redundant in that case; see attended-bringup.md route selection." ;;
+    *)
+      log "kernel provenance: $kpath -- stock kernel, as expected. This is route (a)'s target (out-of-tree modules against the running stock kernel), not route (b) (nix-strix-halo's linux-thunderbolt, a full kernel swap)." ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # 4. kernel-devel discovery -- the reference recipe assumes a conventional
 #    /usr/src/kernels or /lib/modules/$KVER/build layout (RPM-style). This
 #    pair runs NixOS end to end, which does not populate either path by
@@ -236,10 +277,15 @@ build_matched_set() {
      /run/booted-system/kernel-modules/lib/modules/$KVER/build
      /run/current-system/kernel-modules/lib/modules/$KVER/build
    This pair is NixOS, and NixOS does not populate a conventional kernel-devel
-   layout by default the way the RPM-style reference recipe assumes. Expose
-   one -- e.g. build against 'config.boot.kernelPackages.kernel.dev' for this
-   generation and symlink its output to one of the paths above -- then re-run.
-   Not attempting to guess a Nix derivation path here; see REPORT.md."
+   layout by default the way the RPM-style reference recipe assumes. The
+   running kernel is a STOCK nixpkgs kernel though (confirmed: no
+   linux-thunderbolt in the store), which makes this the easy case -- a plain
+   nixpkgs kernel's .dev output is a normal, always-buildable derivation,
+   unlike a hand-patched fork would be. Concretely:
+     nix build '.#nixosConfigurations.<this-host>.config.boot.kernelPackages.kernel.dev'
+   then symlink its result to /lib/modules/$KVER/build and re-run. Not
+   attempting that build automatically here -- it belongs in the operator's
+   own flake evaluation, not silently invoked by a fetch script; see REPORT.md."
 
   log "KDIR: symlink farm over $kdev + westeri thunderbolt.h overlay + CONFIG_USB4_CONFIGFS=y"
   rm -rf "$WORK"; mkdir -p "$OUT"
@@ -286,12 +332,36 @@ build_matched_set() {
 }
 
 # ---------------------------------------------------------------------------
-# 7. host-side rdma-core + usb4_rdma provider -- OPTIONAL, host diagnostics
-#    only (ibv_devices on the bare host). The serving container builds and
-#    ships its own provider; this step never gates the module build above.
+# 7. userspace verbs provider -- CHECK FIRST, build only as an explicit
+#    opt-in fallback. nix-strix-halo already realizes thunderbolt-ibverbs
+#    0.3.4 + its own rdma-core-usb4 63.0 fork in this fleet's store (a
+#    substrate fact, not this script's guess) -- building a second copy from
+#    the reference's stale v57.0 pin would be redundant at best and a
+#    conflicting ABI at worst. Default behavior: report what's in the store
+#    and stop. Never gates the kernel module build above either way.
 # ---------------------------------------------------------------------------
-build_rdma_core() {
-  log "rdma-core @ $RDMA_CORE_TAG (host diagnostics build -- best effort, non-fatal)"
+check_userspace() {
+  log "userspace verbs provider -- checking the nix store before building anything"
+  local tbv_pkg rdma_pkg
+  tbv_pkg=$(find /nix/store -maxdepth 1 -name "$NIX_USERSPACE_PROVIDER_GLOB" 2>/dev/null | head -1)
+  rdma_pkg=$(find /nix/store -maxdepth 1 -name "$NIX_USERSPACE_RDMACORE_GLOB" 2>/dev/null | head -1)
+
+  if [ -n "$tbv_pkg" ] && [ -n "$rdma_pkg" ]; then
+    log "found in store: $(basename "$tbv_pkg"), $(basename "$rdma_pkg") -- userspace is already realized, not building a second copy"
+    log "!! OPEN QUESTION (see REPORT.md): this script's kernel module is built from thunderbolt-ibverbs @ ${IBV_BASE:0:12}. Whether the ALREADY-REALIZED userspace above was built from that same commit, or a different one at a different uverbs ABI revision, is unverified here. Confirm before trusting 'ibv_devices' output on the host -- not just its presence, its version against ${IBV_BASE:0:12}."
+    return 0
+  fi
+
+  log "!! expected nix-realized userspace not found in /nix/store on this node ($NIX_USERSPACE_PROVIDER_GLOB / $NIX_USERSPACE_RDMACORE_GLOB)."
+  if [ "${FLASHNEXT_BUILD_RDMA_CORE_FALLBACK:-0}" != 1 ]; then
+    log "   Not building a from-scratch copy by default -- the reference's v57.0 pin is a known-stale target against what this fleet already committed to (rdma-core-usb4 63.0). Set FLASHNEXT_BUILD_RDMA_CORE_FALLBACK=1 to attempt the legacy vanilla-clone fallback anyway (host-diagnostics only; never gates the kernel module build)."
+    return 0
+  fi
+  build_rdma_core_fallback
+}
+
+build_rdma_core_fallback() {
+  log "rdma-core @ $RDMA_CORE_TAG (LEGACY fallback build -- host diagnostics only, best effort, non-fatal)"
   mkdir -p "$(dirname "$RDMA_CORE_DIR")"
   if ! { [ -d "$RDMA_CORE_DIR/.git" ] || git clone --depth 1 -b "$RDMA_CORE_TAG" "$RDMA_CORE_REMOTE" "$RDMA_CORE_DIR"; }; then
     log "!! rdma-core clone failed -- skipping host-side provider build (does not affect the kernel module set above)"
@@ -335,12 +405,18 @@ build_rdma_core() {
 # ---------------------------------------------------------------------------
 main() {
   log "flashnext RDMA fetch-and-build -- target kernel $TARGET_KVER, building for $KVER"
+  log "REMINDER: this stages a MORNING PLAN. It does not gate on, and cannot
+   confirm, the one precondition that actually matters most -- that a
+   committed TP=2-over-TCP benchmark is already banked under results/. Staging
+   this package is harmless prep; attended-bringup.md refuses to let you go
+   further than staging until that benchmark exists."
+  log_kernel_provenance
   check_local_kernel "$(uname -r)"
   check_peer_kernel
   check_secure_boot
   fetch_sources
   build_matched_set
-  build_rdma_core
+  check_userspace
 
   cat <<PLAN
 
@@ -351,16 +427,19 @@ Artifacts: $OUT
   thunderbolt_ibverbs.ko
   MANIFEST  (vermagic per module -- diff this against the peer's before trusting a match)
 
-Nothing was installed, blacklisted, or loaded, and no boot config was touched.
-This node's half of the attended install plan:
+Nothing was installed, blacklisted, loaded, or rebooted, and no boot config or
+firewall rule was touched. This node's half of the attended plan:
   1. Copy $OUT/*.ko to the same path prefix on BOTH nodes (or re-run this
      script on each -- it is deterministic given the same KVER).
   2. Diff MANIFEST between coordinator and worker. Vermagic must match
      exactly, or the pair will not agree on the ABI.
-  3. Follow host/rdma/attended-bringup.md from the top. It is the ordered,
-     human-in-the-loop checklist for everything from here: the temporary
-     boot-time module load, the coordinated reboot, the RoCE bring-up, and
-     the verify gate. Do not skip ahead to insmod from this script's output.
+  3. Follow host/rdma/attended-bringup.md from the top -- it starts with a
+     hard gate (TP=2-over-TCP banked, or stop here) and a MANDATORY step
+     that has nothing to do with RDMA modules at all: fixing the worker's
+     deploy-rs path off Thunderbolt before anything below touches a kernel
+     module. Do not skip ahead to insmod from this script's output, and do
+     not reboot anything without reading that checklist's reboot-order
+     section first -- it is sequential (worker first), not simultaneous.
 
 PLAN
 }
