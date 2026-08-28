@@ -47,12 +47,12 @@ Four findings from tonight's source sweep (full evidence with file:line pins in
 | Model | Qwen3.8-Flash-Next-FP8 (expert-only block-FP8; attention/GDN/trunk bf16 as shipped) | HF rev `970c569` |
 | Engine | fork of vLLM: [mecattaf/vllm branch `flashnext`](https://github.com/mecattaf/vllm/tree/flashnext) — base = PR #54129 head (carries #53896's model code) + gfx1151 patches | base `8e4e036` |
 | Cherry-picks | vLLM PRs #46012 (wave32 LDS fix in `top_k_per_row_decode`), #40963 (APU/UMA memory accounting), #51511 (skinny-GEMM disable on gfx1151), #46110 (KFD platform detection) | see `IMPORTS.md` |
-| torch | `torch 2.13.0+rocm7.14.0` — AMD's **stable** gfx1151 wheels (the fork's exact pin) | repo.amd.com multi-arch |
+| torch | `torch 2.13.0+rocm7.14.0` — AMD's **stable** gfx1151 wheel channel now publishes 2.10 through 2.13, so the fork's exact pin is satisfied natively | repo.amd.com multi-arch |
 | Container | Ubuntu 24.04 + stable wheels + fork built from source, recipe after [kyuz0/amd-strix-halo-vllm-toolboxes](https://github.com/kyuz0/amd-strix-halo-vllm-toolboxes) (MIT) | `container/` |
 | Engram | `VLLM_PLE_MMAP=1` — table served from each node's NVMe via mmap page faults, 0 bytes GPU-resident, no per-token collective at the lookup site | fork |
 | MTP | in-checkpoint multi-token prediction (no external drafter), vLLM v1 spec-decode | fork |
 | Transport | RCCL over TCP, both Thunderbolt rails — one TB5-cabled, one TB3-cabled, both trained at 40 Gb/s (PM QoS held both ends: 77 µs avg RTT; an unheld C3 sleep state costs 8.5× latency); 5 GbE = ssh/control. No RDMA in this campaign. | dotfiles |
-| Packaging | **NixOS-native first**: the engine as a nix derivation (fork source + patches injected into the [nix-strix-halo](https://github.com/hellas-ai/nix-strix-halo) vLLM expression, ROCm 7.15 substrate already realized in the local store — the 8.4 GB SDK is a download, not a build). The container is the *fallback* lane, not the plan. No VMs: the iGPU can't be VFIO-passed on Strix Halo, and nix-native means systemd runs the store path directly — no OCI layer at all. | `flake.nix` |
+| Packaging | **Podman tonight, Nix at graduation** — you don't nixify a moving target. Tonight's deliverable is a serving measurement, so the engine builds in a container with a bind-mounted, ccache'd build dir (a one-line patch rebuilds incrementally; nix charges a full few-hundred-kernel HIP recompile per edit). Once the patch set is frozen and proven, the repo graduates to NixOS-native — the complete nix wiring, substrate audit, and hazard ledger already ship in [`specs/flashnext/evidence/`](specs/flashnext/evidence/) as the graduation spec. No VMs: the iGPU can't be VFIO-passed on Strix Halo. | `container/`, `flake.nix` |
 | Discipline | patch overlay + MANIFEST + verify script + packaging tests (after [AlexKGwyn/ds4-vllm](https://github.com/AlexKGwyn/ds4-vllm), Apache-2.0) | `patches/`, `tests/` |
 
 ## Status

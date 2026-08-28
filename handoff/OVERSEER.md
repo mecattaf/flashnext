@@ -53,38 +53,51 @@ weights staging (independent, start early) ────────────�
 estate lanes (container fallback, host, bench, docs) — tally, in parallel
 ```
 
-## Nix discipline (Tom's directive: nix-caused failure risk = zero)
+## Engine lane ruling (final, operator-confirmed): PODMAN TONIGHT, NIX AT GRADUATION
 
-1. **The one big build**: `nix build --cores 32 --max-jobs 1` — the host's
-   global `cores = 8, max-jobs = 4` would give the HIP compile a quarter of
-   the machine. Kick it the moment the fork is pushed; log wall-clock (it is
-   UNKNOWN-6 and the night's unit of currency). Budget **at most 3 recompiles**.
-2. **Never use `nix build` as the inner loop.** Iterate engine patches in a
-   devshell with the built store path on PYTHONPATH plus a writable overlay
-   dir; seal into a derivation only what already works.
-3. **Gate 0 before anything**: the packaging expression's `--replace-fail`
-   literals (six of them, incl. `"torch == 2.11.0"`) against the fork's
-   bytes; the fork carries a substrate-compat commit that *satisfies* them —
-   you cannot append around them.
-4. **Stripped-deps audit**: the overlay drops 22 dep names (datasets,
-   outlines, peft, timm, xformers, pyarrow, …). Grep the fork's new code for
-   imports of any of them BEFORE the build window; a 3am missing-dep is a
-   hard stop under nix.
-5. **Mirror the substrate tarball tonight** (fixed-output rot): the pinned
-   AMD nightly `therock-dist-linux-gfx1151-7.15.0a20260719.tar.gz` (1.75 GB)
-   still answers 200 but nobody promises retention. Mirror to the NAS
-   (`/mnt/nas/mirrors/`) with its sha256 recorded.
-6. **Do NOT `nix flake update nix-strix-halo` anywhere** — it moves the
-   engine onto a ROCm 10 SDK that has no gfx1151 torch wheels. The warm
-   substrate is GC-rooted at `~/.cache/flashnext-rocm/` (vllm-rocm AND a
-   realized ds4-rocm — the latter was actually built, not merely declared).
+Tonight's engine is the **container** (`container/build.sh` → `flashnext:dev`,
+Ubuntu 24.04 + AMD *stable* wheels `torch 2.13.0+rocm7.14.0` — the fork's
+exact pin, published on the stable channel — fork built from source with a
+bind-mounted, ccache'd build dir). Reasons, so nobody relitigates at 2am: the
+stable channel satisfies the fork's real pin with no downgrade-on-faith; a
+container iterates incrementally (shell in, edit, restart — one-line patches
+rebuild only what changed) while nix charges a full few-hundred-kernel HIP
+recompile per edit; and `pip install` at 03:00 closes the unbounded
+missing-dep failure class. **Minute-zero expensive item: start the base image
+pull + wheel prefetch immediately** (nothing is pulled yet; podman 5.8.4 and
+/dev/kfd + /dev/dri access are verified clean).
+
+The nix lane is the **graduation spec** — the fork-engineering workflow still
+lands the flake wiring, the Gate-0 substrate audit, and `build-engine.sh`;
+none of it is tonight's critical path. Ignore any workflow-report instruction
+to kick `nix build .#vllm-fork` tonight. Graduation notes that stay true:
+`--cores 32 --max-jobs 1` for the one big nix build; devshell inner loop;
+the substrate tarball mirror (fixed-output rot — run
+`scripts/mirror-substrate.sh` if the workflow didn't); **never
+`nix flake update nix-strix-halo`** (moves onto a ROCm 10 SDK with no gfx1151
+torch wheels); **never `nix-collect-garbage` tonight** — the warm substrate
+is GC-rooted at `~/.cache/flashnext-rocm/`.
 7. The dotfiles flake is un-evaluable in place (a committed unix socket) —
    never gate anything on `nix build ~/mecattaf/dotfiles#…`.
-8. Fallback trigger: two nix-lane aborts on *different* causes, or one abort
-   whose fix needs upstream-expression surgery → switch to the container lane
-   (`container/build.sh`, kyuz0 recipe, torch 2.13 stable wheels) and record
-   the pivot in the build receipt. The morning repo must still ship the nix
-   packaging as the *intended* path with the abort documented.
+7b. **Never run `nix-collect-garbage` tonight**, and verify no cleanup step
+   does — the warm substrate lives on the hand-made GC roots at
+   `~/.cache/flashnext-rocm/`. One caveat to close cheaply: the realized
+   `python3.13-vllm-0.25.1` store path's provenance was closure-checked but
+   not lock-traced — confirm which lock built it before treating it as the
+   warm baseline.
+7c. **RDMA is a morning plan, never an overnight act** (operator ruling:
+   "no unsupervised reboots, period"). The kernel half is entirely unpaid on
+   this fleet (stock 7.1.4, no tbv module, `/sys/class/infiniband/` empty);
+   the RDMA track may only *start* after a committed TP=2-over-TCP benchmark
+   is banked, and its checklist's first step is moving the worker's deploy
+   path off the fast rail (deploy-rs dials 10.99.0.2 over Thunderbolt with
+   `-F /dev/null` — a worker rebooting into a bad-TB kernel severs its own
+   deploy path). See `specs/flashnext/evidence/nix-hardening-addendum.md`.
+8. If the *container* lane itself hits a wall (wheel resolution, fork build
+   error), the fix lives inside the container: shell in, `pip install`,
+   patch, ccache rebuild — iterate there, then seal the fix back into
+   `container/Containerfile` and the fork branch. Do not pivot to the nix
+   lane under pressure; it is strictly slower to iterate.
 
 ## Engine subtleties that will bite at 3am (all evidence-pinned)
 
