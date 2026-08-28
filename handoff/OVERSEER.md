@@ -142,12 +142,20 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
   `VLLM_MOE_USE_DEEP_GEMM`, `VLLM_ROCM_USE_AITER*` are read via `is_set()`
   probes — exporting the default *diverts the oracle into a hard raise*.
 - **If an ibverbs device exists on the rails (`ls /sys/class/infiniband/`
-  non-empty — possible after the attended pre-arm bake), the overnight env
-  MUST pin `NCCL_IB_DISABLE=1`.** RCCL autodetects verbs devices; without
-  the pin the collective could silently ride the unproven RDMA path
-  overnight. Sockets are the transport of record until the attended morning
-  A/B adopts otherwise. Make sure `host/fn-env.sh` (host-tooling lane)
-  carries this line — steer the lane if it does not.
+  non-empty — true after the pre-arm bake), the overnight env MUST pin
+  `NCCL_IB_DISABLE=1`.** RCCL autodetects verbs devices; without the pin the
+  collective could silently ride the unproven RDMA path overnight. Sockets
+  are the transport of record until the attended morning A/B. The host-tooling
+  worklist task now *requires* this (its acceptance greps for it) — but
+  verify `host/fn-env.sh` carries it after the lane runs, and steer if not.
+- **Rail 1 (`thunderbolt1`) is trained but IP-UNCONFIGURED** (169.254.x
+  link-local, no peer; `modules/lowlat-cluster.nix` calls it "TRAINED BUT
+  UNCONFIGURED"). Rail 0 (`thunderbolt0`, 10.99.0.x /30) is the only rail
+  carrying routable IP. The worklist now sets `NCCL_SOCKET_IFNAME` from rails
+  that actually have an IP, so this is handled — **but if TP=2 bootstrap hangs
+  at ~03:00, a peerless rail 1 in the socket list is the first suspect: drop
+  `thunderbolt1`, keep `thunderbolt0`.** Do not add rail 1 back without a
+  peer IP on both ends.
 - **`_GCN_ARCH` one-liner first** inside the built engine:
   `python -c "import vllm.platforms.rocm as r; print(r._GCN_ARCH, r.on_cdna(), r.on_rdna4())"`.
 - The oracle failure is **loud and at layer construction** — if a serve
