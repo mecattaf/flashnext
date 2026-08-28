@@ -1,0 +1,70 @@
+# IMPORTS — every external artifact, pinned
+
+*The authoritative manifest of what this repo consumes, from where, at which
+revision, under which license, and why. Every row was verified against source
+on 2026-08-28 (evidence: `specs/flashnext/evidence/`). Anything not listed
+here is original work under this repo's Apache-2.0 LICENSE.*
+
+## 1. torch / wheel substrate — the versioning decision
+
+| Component | Pin | Source | Why |
+|---|---|---|---|
+| torch | `2.13.0+rocm7.14.0` (cp312/cp313 per image python) | `https://repo.amd.com/rocm/whl-multi-arch/` (AMD **stable** index) | The vLLM fork's `pyproject.toml` pins `torch == 2.13.0` exactly; AMD's stable multi-arch index carries this wheel for gfx1151 (verified 2026-08-28 — the index tops out at torch 2.13.0+rocm7.14.0). No nightly needed, no pin relaxation needed. |
+| torchvision | `0.28.0+rocm7.14.0` | same index | torch 2.13-aligned. |
+| torchaudio | **omitted** | — | Only needed for vLLM audio extras; it is what capped kyuz0's auto-resolved set at torch 2.11.0. We drop the extra instead of downgrading torch. |
+| triton | wheel accompanying the torch set on the same index; fallback: the `pytorch-triton-rocm` wheel torch 2.13.0 declares | same index | Must be < 3.8.0 awareness: the fork's fp8-upcast gate keys on `triton < 3.8` (see PR #52970 pattern below). Record the resolved version in the build receipt. |
+| ROCm userspace | rides inside the torch wheel set (`_rocm_sdk_core`, rocm 7.14.0) | same index | Stable, matches kernel 7.1.4 driver on both nodes. **ROCm 10 is out of scope**: AMD publishes no ROCm 10 gfx1151 torch wheels (`stable.repo.amd.com/rocm/whl-multi-arch/` → 404; verified), and the ROCm 10 rocBLAS bump (5.5.0.cd957402 → 5.6.0.8d1ae90e) invalidates tuned GEMM solution indices. |
+
+## 2. The vLLM fork — `mecattaf/vllm` branch `flashnext`
+
+**Base: `8e4e036a311604800334989485b4ee23925956da`** — the head of upstream PR
+[#54129](https://github.com/vllm-project/vllm/pull/54129) (`Trosfy:ple-mmap-upstream`),
+which already carries the complete model support of PR
+[#53896](https://github.com/vllm-project/vllm/pull/53896) (`peakcrosser7:release/qwen38next`)
+plus a fresh upstream-main merge. #53896's later head commit is CI-only and is
+not taken. Verified: the two branches' model trees are byte-identical except
+upstream drift in 6 files where #54129 is newer, and `nvidia/ple_mmap.py` which
+only #54129 has. (Apache-2.0 throughout.)
+
+### 2.1 Cherry-picks from open upstream PRs (committed with `Cherry-picked-from:` trailers)
+
+| PR | Title | Size | Why we need it |
+|---|---|---|---|
+| [#46012](https://github.com/vllm-project/vllm/pull/46012) | Fix Wave32 LDS overflow in top-k merge launch | 5 lines | **Load-bearing.** `top_k_per_row_decode` — the exact custom op the `amd/` QSA indexer calls — launches its merge at 1024 threads, exceeding the 64 KB LDS on wave32. 512 on ROCm. |
+| [#40963](https://github.com/vllm-project/vllm/pull/40963) | Detect AMD APU, fix VRAM reporting for unified memory | 87 lines | **Load-bearing.** On this APU, hipMemGetInfo reports the small VRAM aperture as total; vLLM's KV-cache sizing then miscomputes. Reads sysfs GTT totals instead (8 GiB reserve). |
+| [#51511](https://github.com/vllm-project/vllm/pull/51511) | Disable skinny GEMM on gfx1151 | 96 lines | wvSplitK is "pathologically slow" on gfx1151 per the PR; falls back to torch GEMM. |
+| [#46110](https://github.com/vllm-project/vllm/pull/46110) | ROCm detection via KFD topology when amdsmi fails | 170 lines | Robustness: platform + `_GCN_ARCH` detection without HIP init, straight from `/sys/class/kfd`. |
+
+### 2.2 Pattern adoption (not a cherry-pick)
+
+| PR | What we take |
+|---|---|
+| [#52970](https://github.com/vllm-project/vllm/pull/52970) (amd-xavierwang, "aiter Triton kernels + dsv4 on RDNA3") | The **`FORCE_FP8_DOT_UPCAST` mechanism**: in the block-scaled w8a8 Triton GEMM, load fp8 A/B tiles then `.to(tl.bfloat16)` before `tl.dot`, gated `on_gfx1151() and triton < 3.8`. This is AMD's own sanctioned answer to "no FP8 unit on RDNA3.5". Our fork applies the same transform to the **fused-MoE** Triton kernel and admits `(kFp8Static128BlockSym, kFp8Dynamic128Sym)` for gfx1151 in `TritonExperts._supports_quant_scheme`, behind `FN_FP8_MOE` (default on; `=0` restores the stock loud refusal). The aiter-library parts of #52970 are NOT taken (aiter excluded from the container this campaign). |
+| [#44331](https://github.com/vllm-project/vllm/pull/44331) (tuned MoE configs for Radeon 8060S) | Deferred to the 4-bit lane (its configs are `int4_w4a16`, E=256). What we take now is the *mechanism knowledge*: fused-MoE reads per-device tuned-config JSONs — generating `E=512,N=640,device_name=Radeon_8060S_Graphics,dtype=fp8_w8a8` is a named optimization task once first light lands. |
+| [#46186](https://github.com/vllm-project/vllm/pull/46186), [#46676](https://github.com/vllm-project/vllm/pull/46676) | The future 4-bit expert lane (W4A16 GEMM on gfx1151; native HIP MXFP4 for RDNA3). Not in this campaign's scope; recorded so nobody re-finds them. |
+
+### 2.3 Our two original patches (the world-first pieces)
+
+| Patch | Content | Upstream destination |
+|---|---|---|
+| `patches/0001-fp8-moe-gfx1151-admission.patch` | Oracle admission for block-FP8 fused-MoE on gfx1151 + fp8→bf16 in-kernel upcast in the fused-MoE Triton kernel (the #52970 pattern applied to MoE) + `FN_FP8_MOE` kill-switch + a loud log line naming the selected kernel class | PR to vllm-project/vllm, referencing #52970 |
+| `patches/0002-amd-ple-fp8-mmap-port.patch` | The `amd/` PLE port: mmap wiring (5 sites mirroring `nvidia/ple_layer.py`), the FP8 embedding stack (`Qwen4ExpPLEFp8EmbeddingMethod`, gather-time dequant, `weight_scale` interception) the AMD tree lacks entirely, `ple_mmap.py` relocated to `common/` | PR against #54129's head branch (its author has no gfx1151 hardware) |
+
+## 3. Method and code lifted from the community (per the innovation ledger)
+
+| Source | License | What | Mode |
+|---|---|---|---|
+| [AlexKGwyn/ds4-vllm](https://github.com/AlexKGwyn/ds4-vllm) @ `a8f620d` | Apache-2.0 | Patch-overlay discipline (MANIFEST + verify + 12 packaging invariants, extended); host orchestration shape (husk-reaping, ray pool caps, 2-GPU gate, ExecStopPost); env doctrine (PYTHONHASHSEED=0, expandable_segments, HSA_ENABLE_INTERRUPT=1, caches off tmpfs, ray env-prefix propagation); instruments `ds4_synctrace.py`/`ds4_expert_union.py`/`ds4_offload_batch.py` → adapted as `fn_*` with notices | copy + adapt |
+| [kyuz0/amd-strix-halo-vllm-toolboxes](https://github.com/kyuz0/amd-strix-halo-vllm-toolboxes) @ `23cb726` | MIT | Container recipe shape (`Dockerfile.ubuntu-repoamd`): Ubuntu 24.04 + AMD stable wheels + vLLM from source at arbitrary ref | adapt with notice |
+| kyuz0 toolbox QA docs | no license | Release-gate *method* only (log-grep lexicon, frontier-logit equivalence, depth-regression rule) | method only, no code |
+| [hellas-ai/nix-strix-halo](https://github.com/hellas-ai/nix-strix-halo) @ `f0f2048` | **no license** | Flake **input only** — nothing copied. NCCL/RCCL tuning *values* read as data. Its `tuning` module is explicitly forbidden (would fight our 128 GiB GTT ceiling). Its pair-bench client's `prefill_mean_s` is a TTFT duplicate — we ship our own client. | input use only |
+| llama.cpp-lane research (Nathan, EngramHalo) | MIT / research notes | Silicon facts (int4 2.03×, no fp8 unit, LLC no-allocate, wave32-native WMMA), q8_0-KV > fp8-KV, MoE-wants-large-ubatch, MTP k=3 prediction for 1-layer MTP, load-phase page-cache transient | knowledge |
+
+## 4. What is deliberately NOT imported
+
+- **RDMA/tbv anything** (GPL boundary + excluded scope; TCP is the transport of record).
+- **aiter** (no CK build for RDNA; its Triton-only path unproven on gfx1151 for our kernels; revisit post-first-light).
+- **nix-strix-halo `.nix` code** (no license), **kyuz0 toolbox shell scripts** (no license on those two repos — method only).
+- **ROCm 10** (no torch wheels exist for gfx1151; rocBLAS solution-index breakage documented).
+- **Community W4A16/AWQ quants** of this model (they quantize attention + GDN — exactly what the vendor kept precise).
+- **torchaudio** (caps torch at 2.11; not needed).

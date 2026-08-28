@@ -1,5 +1,12 @@
 {
   "schemaVersion": 1,
   "spec": "specs/flashnext/spec.md",
-  "rows": []
+  "rows": [
+    {"seq": 1, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "3.1", "task": "container-recipe", "acceptance": ["recipe-pins"], "evidence": ["specs/flashnext/evidence/kyuz0-rocm10.md"]},
+    {"seq": 2, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "6.1", "task": "host-tooling", "acceptance": ["host-doctrine"], "evidence": ["specs/flashnext/evidence/ds4-vllm-manifest.md"]},
+    {"seq": 3, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "6.2", "task": "bench-harness", "acceptance": ["bench-honest-client"], "evidence": ["specs/flashnext/evidence/nix-strix-halo.md"]},
+    {"seq": 4, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "5.2", "task": "catalog-handoff", "acceptance": ["catalog-patch-wellformed"], "evidence": ["specs/flashnext/evidence/dotfiles-observed.md"]},
+    {"seq": 5, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "4.1", "task": "proxy-tooling", "acceptance": ["proxy-scripts-clean"], "evidence": ["specs/flashnext/evidence/ple-54129.md", "specs/flashnext/evidence/moe-dispatch.md"]},
+    {"seq": 6, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "7.1", "task": "morning-ledger", "acceptance": ["ledger-sections"], "evidence": []}
+  ]
 }
