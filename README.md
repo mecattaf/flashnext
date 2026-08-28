@@ -4,8 +4,9 @@
 [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8)
 (125B trunk + 51.2B engram table, 6B active, 262K context) with **vLLM at
 tensor-parallel size 2 across two Framework Desktops** (Ryzen AI MAX+ 395 /
-gfx1151 / 128 GB each), connected by **two Thunderbolt 4 cables (the inference
-plane, RCCL over TCP)** and a direct **5 GbE link (the control plane)**.
+gfx1151 / 128 GB each), connected by **one TB5 cable + one TB3 cable as the
+tensor plane (both training at 40 Gb/s on these USB4 hosts; RCCL over TCP
+striped across both rails)** and a direct **5 GbE link (the control plane)**.
 
 Being built overnight 2026-08-28 → 2026-08-29, governed by a
 [tally](https://github.com/mecattaf/tally.nix) campaign spec
@@ -57,10 +58,11 @@ Four findings from tonight's source sweep (full evidence with file:line pins in
 
 ## Status
 
-- [x] Evidence sweep (7 dossiers, `specs/flashnext/evidence/`)
-- [x] Estate + spec bootstrap
-- [ ] Fork assembly (admission patch + PLE port + cherry-picks)
-- [ ] Container build
+- [x] Evidence sweep (9 dossiers, `specs/flashnext/evidence/`)
+- [x] Estate + spec bootstrap (spec-lint clean; tally campaign spec ratifiable)
+- [x] **Fork assembly** — [`mecattaf/vllm@flashnext`](https://github.com/mecattaf/vllm/tree/flashnext): 12 commits on the PR base, mirrored in [`patches/`](patches/) with MANIFEST. FP8-MoE admission + in-kernel upcast (MoE *and* linear), the AMD PLE/mmap port with the FP8 embedding stack, APU memory-accounting fix, four upstream cherry-picks
+- [x] RDMA day-2 attended package (`host/rdma/`) — sockets stay tonight's transport
+- [ ] Container build (overnight, tally-governed)
 - [ ] Weights staged on both nodes (NAS → NVMe, hash-verified)
 - [ ] Proxy first light (single node)
 - [ ] TP=2 first light (the real thing)

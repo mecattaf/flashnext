@@ -9,6 +9,31 @@ achieve X so I skipped it" and "preferred to wait for Y" are forbidden
 outcomes.** If something fails: diagnose, steer, fix, or escalate to a typed
 blocker — in that order.*
 
+## State at handoff (2026-08-28 ~23:30 — verify, don't re-derive)
+
+- **Fork DONE and pushed**: `mecattaf/vllm@flashnext` = `bdb6f042`, 12
+  commits on base `8e4e036a`, mirrored 12/12 in `patches/` + MANIFEST;
+  `FN_FORK_STRICT=1 scripts/verify-fork.sh` passes the full set. The fable
+  reviewer added two fixes worth knowing: GTT-routed `MemorySnapshot.measure`
+  (kill-switch `VLLM_ROCM_APU_UNIFIED_MEMORY=0`) and the linear-kernel fp8
+  upcast (`FN_FP8_LINEAR`) — without the latter dense block-FP8 projections
+  hand fp8 to `tl.dot`. A contingency patch for gfx950-era sampler launches
+  is parked at `docs/CONTINGENCY-sampler-cu-remaining-1024-launches.patch`.
+- **Gate 0 = GO** for the nix graduation lane (`docs/GATE0.md`,
+  `tools/check_nix_substrate.py` in the fork). Tonight still builds in the
+  container per ruling P4. First-hardware checklist: bottom of
+  `patches/MANIFEST.md`.
+- **Substrate tarball mirrored + hash-verified** at
+  `/home/tom/mirrors/therock-dist-linux-gfx1151-7.15.0a20260719.tar.gz`;
+  the NAS copy is still owed (`/mnt/nas` root-owned — morning item).
+- **RDMA package v2** under `host/rdma/` (attended, morning, gated on a
+  banked TCP benchmark). A supervised pre-arm reboot pass may have baked the
+  module load + deploy-repoint into dotfiles before you started — check
+  `handoff/PREARM-REBOOT.md` for what actually happened and what it changes
+  for you (esp. the `NCCL_IB_DISABLE=1` rule below).
+- Weights download on NAS was nearing completion at handoff; `cp-weights`
+  stages both nodes.
+
 ## Read first, in order
 
 1. `README.md` — what this is.
@@ -31,11 +56,16 @@ steward `narrator`) grinds the worklist. Observe with
 `tally campaign status mecattaf/flashnext silent-factory-worklists/flashnext.json`,
 steer with `tally campaign steer … --task <id> --message '…'`. Steering is
 append-only and is the whole recovery path (epoch refresh). Never hand-edit a
-lane's worktree, receipts, or the armed graph. **Every friction point with the
-harness itself — a confusing failure, a missing verb, a gate that graded
-wrong — goes into `handoff/TALLY-FINDINGS.md` with enough detail for Tom to
-fix tally.nix.** He is heavily invested in that harness; findings are a
-first-class deliverable of the night.
+lane's worktree, receipts, or the armed graph. **Harness-problem protocol
+(operator-directed):** every friction point with tally itself — a confusing
+failure, a missing verb, a gate that graded wrong — becomes a **GitHub issue
+on `mecattaf/tally.nix`** (`gh issue create -R mecattaf/tally.nix`), written
+with repro detail; keep a one-line index in `handoff/TALLY-FINDINGS.md`. If
+a tally defect is **fatal to tonight's build** — the campaign cannot proceed
+and steering cannot route around it — you are authorized to fix tally.nix
+itself: minimal patch, its own commit on tally.nix main with the issue
+referenced, then resume the campaign. Tom is heavily invested in that
+harness; a good issue is a first-class deliverable of the night.
 
 **Hat 2 — the hard-core engineer.** The fork engineering (admission patch,
 PLE port, cherry-picks, nix wiring) was launched from the setup session as an
@@ -111,6 +141,13 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
 - **Never export a vLLM env default**: `VLLM_USE_DEEP_GEMM`,
   `VLLM_MOE_USE_DEEP_GEMM`, `VLLM_ROCM_USE_AITER*` are read via `is_set()`
   probes — exporting the default *diverts the oracle into a hard raise*.
+- **If an ibverbs device exists on the rails (`ls /sys/class/infiniband/`
+  non-empty — possible after the attended pre-arm bake), the overnight env
+  MUST pin `NCCL_IB_DISABLE=1`.** RCCL autodetects verbs devices; without
+  the pin the collective could silently ride the unproven RDMA path
+  overnight. Sockets are the transport of record until the attended morning
+  A/B adopts otherwise. Make sure `host/fn-env.sh` (host-tooling lane)
+  carries this line — steer the lane if it does not.
 - **`_GCN_ARCH` one-liner first** inside the built engine:
   `python -c "import vllm.platforms.rocm as r; print(r._GCN_ARCH, r.on_cdna(), r.on_rdna4())"`.
 - The oracle failure is **loud and at layer construction** — if a serve
