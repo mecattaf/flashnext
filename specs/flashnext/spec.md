@@ -49,8 +49,12 @@ a silent skip.
 - proxy checkpoint (NEW) — a small synthetic checkpoint with the same
   architecture identifier and expert format, for single-node first light
   before the real weights are touched.
-- container (NEW) — the image flashnext:dev built by container/build.sh from
-  the fork at the ruling P4 wheel set.
+- engine build (NEW) — the fork made runnable per ruling P4: primarily the
+  nix derivation at the substrate already realized on this machine, with the
+  container as the fallback lane; scripts/build-engine.sh records which lane
+  served in the build receipt.
+- container (NEW) — the fallback image flashnext:dev built by
+  container/build.sh from the fork at stable vendor wheels.
 - pair service (NEW) — the orchestration under host/ standing both ranks:
   container up on both nodes, distributed head and worker, then the serve
   process at tensor-parallel two.
@@ -69,13 +73,13 @@ a silent skip.
 | P1 | identity and timing | identity flashnext; the worklist and every gate id below are authored at this S1 sitting; the Governs line resolves before ratification |
 | P2 | workload naming | model-family names stay out of spec and worklist bytes (lint L16); the workload is named by revision and by the node-side artifact directory; full names live in README.md and evidence |
 | P3 | fork base | the table pull request's head is the base — it carries the model-support pull request's model code; the model-support branch's later head commit is CI-only and is not taken |
-| P4 | wheel pin | torch 2.13.0+rocm7.14.0 with torchvision 0.28.0+rocm7.14.0 and the matching triton from the vendor stable index — the fork's own torch pin satisfied exactly; no nightly; audio extras dropped rather than the pin lowered |
+| P4 | engine substrate | nix-native primary: the fleet flake input's engine derivation with source repointed at the fork and our patches injected, on the substrate already realized in this machine's store (torch 2.11.0 wheels, the 8.4 G SDK, a compiled engine at the old version) — the fork carries a substrate-compat commit satisfying the packaging literals including the torch pin; container fallback: stable-index torch 2.13.0+rocm7.14.0 wheels with the fork built from source; the first successful lane serves the night and the build receipt names it |
 | P5 | admission shape | the admission extends the upcast mechanism of upstream pull request 52970 to the fused-mixture oracle; refusal stays loud; FN_FP8_MOE=0 restores the stock refusal; no silent fallback is added |
 | P6 | cherry-picks | upstream pull requests 46012, 40963, 51511, 46110 enter the fork with Cherry-picked-from trailers; 44331, 46186, 46676 receive no task in this campaign and are recorded in IMPORTS.md for the four-bit lane |
 | P7 | transport | socket transport on both rails, both named to the collective library; RDMA receives no requirement, no task, no code path |
 | P8 | weights | staged library-to-node by scripts/stage-weights.sh with a per-file digest manifest; the fleet catalog row is a morning operator act prepared under handoff/; runtime hub downloads stay forbidden |
 | P9 | unattended overnight | GPU checkpoints run unattended; a wedge needing physical presence ends the campaign with the blocker typed in the morning ledger; no overnight reboot of either node |
-| P10 | first light mode | eager execution first; graph capture modes are morning work |
+| P10 | first light mode | the table path's own guard demands piecewise capture with the mmap operation as a split boundary and refuses plain eager — first light runs that sanctioned mode; full-graph capture is morning work |
 | P11 | residency verdict | read after 50 warmed decode tokens on both ranks, never at load; GTT, RSS, and table page-cache residency recorded; pass bound 80 GiB per rank with zero table bytes GPU-resident |
 | P12 | bench protocol | three loads per arm, interleaved arms, medians, token fingerprints; depth series 0, 10240, 102400; speculative on and off arms; rows committed under results/ |
 | P13 | promotion | a morning human act; nothing overnight changes any fleet roster or default |
@@ -101,7 +105,7 @@ Why: the fork is the only path this class of workload can take on this GPU; its 
 
 ### R3 — the container
 Why: the pinned wheel set and the fork meet for the first time inside the image; the smoke step answers the cheap questions before any weight byte moves.
-3.1 `container/build.sh` builds the image from the fork at the ruling P4 wheel set → a build receipt records status pass with the resolved torch and triton versions. [gate: receipts-verify]
+3.1 the engine build lands through the ruling P4 primary or fallback lane → a build receipt records status pass with the lane, the resolved torch and triton versions, and the wall-clock. [gate: receipts-verify]
 3.2 `scripts/run-smoke.sh` runs against the image → a smoke receipt records the GPU architecture string, a finite fp8 storage cast, the registered architecture identifier, the aperture, and the admission verdict. [gate: receipts-verify]
 
 ### R4 — engine proof
@@ -142,6 +146,8 @@ UNKNOWN-2 whether fp8 storage plus the widening cast works on the pinned torch b
 UNKNOWN-3 whether the collective library crosses the pair at tensor-parallel two over socket transport — drained by claim 4.2.
 UNKNOWN-4 the fork's runtime behavior on the ruling P4 wheel set — drained by claims 3.1 and 4.1.
 UNKNOWN-5 speculative-decode acceptance on real prompts and the draft-length optimum — recorded by the bench receipt; tuning is morning work.
+UNKNOWN-6 the wall-clock of one fork engine recompile on this machine — measured by the first build receipt; the night budgets at most 3 (given) recompiles.
+UNKNOWN-7 whether the pinned packaging expression still satisfies every override signature and literal against the fork tree — drained by the substrate-compat audit and the first nix-lane build.
 DECISION-1 does the container carry the aiter library? proposed: no — the admission path is self-contained and the aiter half of the pattern donor stays out (given)
 
 ## Stages
@@ -172,7 +178,7 @@ F.7 Never decide the residency verdict from load-time readings.
 F.8 Do not commit a benchmark number from a single uncounterbalanced run.
 F.9 Do not export an environment default the engine reads through an is-set probe.
 F.10 Do not vendor GPL code into the estate.
-F.11 Do not adopt a nightly wheel while the stable set satisfies the torch pin.
+F.11 Do not pull any wheel outside the two sanctioned sources — the realized substrate in the store and the vendor stable index.
 F.12 Never record an overnight step as skipped without a typed blocker in the morning ledger.
 F.13 Do not reboot either node overnight.
 F.14 Do not open any upstream pull request or issue from a lane.

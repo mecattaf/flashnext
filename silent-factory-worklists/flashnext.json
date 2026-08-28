@@ -50,7 +50,7 @@
       "id": "container-recipe",
       "kind": "implementation",
       "title": "Container recipe: pinned wheel set + engine fork built from source",
-      "goal": "Write container/Containerfile and container/build.sh implementing IMPORTS.md sections 1 and 2 and spec claim 3.1 (specs/flashnext/spec.md#r3). Containerfile: Ubuntu 24.04; python 3.12 venv at /opt/venv; install torch 2.13.0+rocm7.14.0 and torchvision 0.28.0+rocm7.14.0 and the matching triton wheel from the vendor stable index https://repo.amd.com/rocm/whl-multi-arch/ (record the exact resolved triton version); git clone --depth 1 --branch flashnext https://github.com/mecattaf/vllm and build it from source against those wheels for GPU target gfx1151 (relax nothing: the torch pin is satisfied exactly; drop audio extras rather than adding torchaudio); COPY container/rootfs/ into site-packages so the fn_ instrument modules land importable; write /opt/flashnext/build-info.json inside the image carrying the fork commit, torch, triton, and image build time. build.sh: run the packaging tests first, then podman build tagged flashnext:dev, then write results/receipts/build.json as {step:\"build\", status, ts, data:{torch, triton, fork_commit, image_digest}} with status fail on any error. Credit the recipe shape to the MIT toolbox recipe named in THIRD_PARTY_NOTICES.md in the Containerfile header. Boundaries: touch only container/ and results/receipts/.",
+      "goal": "FALLBACK lane of spec ruling P4 — the primary is the nix derivation whose wiring already lives in flake.nix and scripts/build-engine.sh; this container exists so a nix-lane abort cannot cost the night. Write container/Containerfile and container/build.sh implementing IMPORTS.md sections 1 and 2 and spec claim 3.1 (specs/flashnext/spec.md#r3). Containerfile: Ubuntu 24.04; python 3.12 venv at /opt/venv; install torch 2.13.0+rocm7.14.0 and torchvision 0.28.0+rocm7.14.0 and the matching triton wheel from the vendor stable index https://repo.amd.com/rocm/whl-multi-arch/ (record the exact resolved triton version); git clone --depth 1 --branch flashnext https://github.com/mecattaf/vllm and build it from source against those wheels for GPU target gfx1151 (relax nothing: the torch pin is satisfied exactly; drop audio extras rather than adding torchaudio); COPY container/rootfs/ into site-packages so the fn_ instrument modules land importable; write /opt/flashnext/build-info.json inside the image carrying the fork commit, torch, triton, and image build time. build.sh: run the packaging tests first, then podman build tagged flashnext:dev, then write results/receipts/build.json as {step:\"build\", status, ts, data:{torch, triton, fork_commit, image_digest}} with status fail on any error. Credit the recipe shape to the MIT toolbox recipe named in THIRD_PARTY_NOTICES.md in the Containerfile header. Boundaries: touch only container/ and results/receipts/.",
       "deliveredBehaviors": [
         "A reproducible image build from the fork at the exactly pinned wheel set",
         "A build receipt the receipts gate can grade"
@@ -216,9 +216,9 @@
     {
       "id": "cp-build",
       "kind": "checkpoint",
-      "title": "Checkpoint: build the container image from the fork",
-      "argv": ["bash", "container/build.sh"],
-      "runtimeMaxSec": 10800,
+      "title": "Checkpoint: the engine build — nix lane first, container fallback",
+      "argv": ["bash", "scripts/build-engine.sh"],
+      "runtimeMaxSec": 14400,
       "dependencies": ["container-recipe", "instruments"]
     },
     {
@@ -257,7 +257,7 @@
       "id": "cp-close",
       "kind": "checkpoint",
       "title": "Checkpoint: full verification pass over everything the night produced",
-      "argv": ["bash", "-euc", "python3 -m unittest discover -s tests && python3 scripts/receipts-verify.py && bash scripts/verify-fork.sh"],
+      "argv": ["bash", "-euc", "python3 -m unittest discover -s tests && python3 scripts/receipts-verify.py && FN_FORK_STRICT=1 bash scripts/verify-fork.sh"],
       "runtimeMaxSec": 3600,
       "dependencies": ["cp-bench", "morning-ledger", "catalog-handoff"]
     }
