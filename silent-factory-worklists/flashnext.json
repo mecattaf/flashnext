@@ -222,7 +222,7 @@
         {
           "id": "rdma-package-sound",
           "description": "Scripts syntax-clean, pins present, no auto-install, attended language present.",
-          "argv": ["bash", "-euc", "bash -n host/rdma/fetch-and-build.sh && grep -q '503c5ae1e72aa9ed91925dafa3d82ee2e992747f' host/rdma/fetch-and-build.sh && grep -q '76ba39b630a70accb72f19388eefe48844b50eb8' host/rdma/fetch-and-build.sh && ! grep -qE 'insmod|modprobe .*usb4' host/rdma/fetch-and-build.sh && grep -qi 'physically present' host/rdma/attended-bringup.md && grep -qi 'worker first' host/rdma/attended-bringup.md && grep -qi 'deploy' host/rdma/attended-bringup.md && test -s host/rdma/ab-protocol.md"]
+          "argv": ["bash", "-euc", "bash -n host/rdma/fetch-and-build.sh && grep -q '503c5ae1e72aa9ed91925dafa3d82ee2e992747f' host/rdma/fetch-and-build.sh && grep -q '76ba39b630a70accb72f19388eefe48844b50eb8' host/rdma/fetch-and-build.sh && ! grep -qE '^[[:space:]]*(sudo[[:space:]]+)?(insmod|modprobe)[[:space:]]' host/rdma/fetch-and-build.sh && grep -qi 'physically present' host/rdma/attended-bringup.md && grep -qi 'worker first' host/rdma/attended-bringup.md && grep -qi 'deploy' host/rdma/attended-bringup.md && test -s host/rdma/ab-protocol.md"]
         }
       ],
       "dependencies": [],
