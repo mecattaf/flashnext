@@ -1,0 +1,1302 @@
+# Dossier: `nix-strix-halo` (hellas-ai) as a flashnext flake INPUT
+
+**Target tree:** `/home/tom/Downloads/nix-strix-halo`
+**Read session date:** 2026-08-28
+**Grading:** `[S]` read from source · `[M]` measured (command output) · `[CL]` claimed by docs, unverified
+
+**Provenance pins (all [M], `git -C /home/tom/Downloads/nix-strix-halo …`):**
+
+```
+remote:  origin  https://github.com/hellas-ai/nix-strix-halo.git
+HEAD:    f0f2048ff842749b363ea3562a98fb0a04bb2e61  2026-08-18 10:03:06 +0200
+         "npu-exporter: add AMD XDNA NPU Prometheus exporter (#162)"
+```
+
+Every line pin below is against this working tree at this commit. The tree is
+clean of local modifications for the files cited.
+
+---
+
+## 0. LICENSE VERIFICATION — the gating question
+
+**[M]** Two independent checks, both negative:
+
+```
+$ ls -la /home/tom/Downloads/nix-strix-halo | grep -iE 'licen|copying|legal'
+(no output, exit 1)
+
+$ find /home/tom/Downloads/nix-strix-halo -iname '*licen*' -o -iname 'COPYING*' -not -path './.git/*'
+(no output)
+```
+
+**[M]** Full file inventory (`find … -type f -not -path '*/.git/*'`) enumerated
+every file in the tree. There is **no `LICENSE`, `LICENSE.md`, `COPYING`,
+`COPYRIGHT`, or `NOTICE` file anywhere**, at any depth.
+
+**[S]** `README.md` was grepped for `license|LICENSE` — **zero matches**. There is
+no license statement in prose either.
+
+**[S]** Individual `.nix` files carry no SPDX headers. The only license-adjacent
+metadata is per-package `meta.maintainers` (e.g.
+`overlays/therock-vllm.nix:357` — `maintainers = with lib.maintainers; [ georgewhewell ]`),
+which is attribution, not a grant.
+
+### Consequence for the campaign
+
+| Use | Status |
+|---|---|
+| Declare as a flake input; consume `packages` / `overlays` / `nixosModules` / `lib` from the store path | **Fine.** No copying occurs; Nix fetches from the public repo. |
+| `import "${inputs.nix-strix-halo}/overlays/therock-vllm.nix" { … }` — importing a path *inside the input's store realisation* | **Fine.** Still input use, not vendoring. This is the escape hatch that matters (see §3). |
+| Copy any `.nix` file, patch, or `lib/bench/*.sh|*.py` into the flashnext tree | **Not allowed.** No LICENSE = all rights reserved by default. |
+| Copy the *shape* of an expression from memory after reading it | **Treat as copying.** Design around the input, do not transcribe. |
+
+**Practical rule for §3–§6:** every mechanism recommended below is expressed as
+*override / follows / import-from-store*, never as "lift their expression."
+
+---
+
+## 1. FULL FLAKE SURFACE
+
+### 1.1 Inputs
+
+**[M]** `flake.lock` root node lists **48 inputs**. **[S]** `flake.nix:4–253`
+declares them. Structurally they are three groups:
+
+**Group A — real flakes (2):**
+
+| Input | `flake.nix` line | URL | Locked rev | Locked date [M] |
+|---|---|---|---|---|
+| `nixpkgs` | `flake.nix:5` | `github:NixOS/nixpkgs/nixos-unstable` | `61b7c44c4073` | **2026-07-18** |
+| `nix-ai-tools` | `flake.nix:7–10` | `github:numtide/nix-ai-tools`, `inputs.nixpkgs.follows = "nixpkgs"` (`flake.nix:9`) | `26b51974319a` | 2026-07-19 |
+| `thunderbolt-ibverbs` | `flake.nix:57–60` | `github:hellas-ai/thunderbolt-ibverbs`, `inputs.nixpkgs.follows = "nixpkgs"` (`flake.nix:59`) | `76ba39b630a7` | 2026-06-30 |
+
+(Three, counting `thunderbolt-ibverbs`. It is the only input whose *outputs* —
+overlay + nixosModule + packages — are consumed; see `flake.nix:292`, `516`, `531`, `305`.)
+
+**Group B — hand-maintained source inputs, `flake = false` (13):**
+
+| Input | line | URL | Locked rev | Locked date [M] |
+|---|---|---|---|---|
+| `ec-su-axb35` | `flake.nix:12–15` | `github:cmetz/ec-su_axb35-linux` | `7a9f372edcaa` | 2026-07-11 |
+| **`llama-cpp-master`** | **`flake.nix:17–20`** | `github:ggml-org/llama.cpp` (no ref → HEAD) | **`571d0d540df0`** | **2026-07-18** |
+| `llama-cpp-spacemit` | `flake.nix:22–25` | `github:spacemit-com/llama.cpp/v0.1.5` | `86d4ff230bdf` | 2026-07-04 |
+| `spine-triton` | `flake.nix:27–30` | `git+…spine-triton.git?ref=refs/tags/0.5.5&submodules=1` | `c62b11c5ea99` | 2026-06-04 |
+| `fastflowlm` | `flake.nix:32–35` | `github:FastFlowLM/FastFlowLM` | `fd371409897d` | 2026-07-17 |
+| `ds4` | `flake.nix:37–40` | `github:antirez/ds4` | `80ebbc396aee` | 2026-06-17 |
+| `ds4-hip` | `flake.nix:42–45` | `github:ejpir/ds4-hip/rocm-upstream-shape-cyberneurova` | `3490c2e46c91` | 2026-06-04 |
+| **`vllm-src`** | **`flake.nix:47–50`** | **`github:vllm-project/vllm/v0.25.1`** | **`752a3a504485`** | **2026-07-12** |
+| `mlx-src` | `flake.nix:52–55` | `github:NripeshN/mlx/rocm-support` | `0dadb703d773` | 2026-07-16 |
+| `xrt-src` | `flake.nix:62–65` | `git+…Xilinx/XRT?ref=XRT-2.21&submodules=1` | `8661761775a2` | 2026-06-04 |
+| `xdna-driver-src` | `flake.nix:67–70` | `git+…amd/xdna-driver?ref=1.7&submodules=1` | `0fb464f6e043` | 2026-06-04 |
+
+**Group C — machine-generated TheRock source tree (33 inputs), `flake = false`:**
+
+**[S]** `flake.nix:72–73`:
+
+```nix
+# BEGIN generated TheRock source inputs
+# Generated by pkgs/therock/scripts/update-source-tree.py; do not edit by hand.
+```
+
+Every input named `therock-src-7-15-gfx1151-*`. Root at `flake.nix:74–77`:
+`github:ROCm/TheRock/1de3171d00f6de55e9ed517dc6ca6e825d1e4b55`, locked
+**2026-07-18** [M]. The other 32 are submodule pins (rocm-libraries, rocm-systems,
+llvm-project, HIPIFY, perfetto, abseil, pybind11, …) — several extremely old
+(pybind11 2022-03-31, gulrak/filesystem 2023-03-05) because they are ROCm's own
+vendored third-party pins, not staleness introduced here.
+
+**[S]** `.github/dependabot.yml:14–19` explicitly *ignores* these:
+
+```yaml
+    ignore:
+      # TheRock source inputs are generated from pkgs/therock/sources/rocm-source.json
+      # and must be bumped atomically by pkgs/therock/scripts/update-source-tree.py.
+      - dependency-name: "therock-src-*"
+      # GitHub Dependabot's Nix updater does not currently support private inputs.
+      - dependency-name: "thunderbolt-ibverbs"
+```
+
+> **On the campaign record's "stale 2026-07-18 llama-cpp pin":** **CONFIRMED [M]**.
+> `llama-cpp-master` locks `571d0d540df0` at **2026-07-18**, 41 days before today.
+> Note the record's framing is slightly off in one respect: 2026-07-18 is not a
+> `llama-cpp`-specific staleness — it is the *whole lock's* watermark. `nixpkgs`
+> and the TheRock root are locked to the **same day**.
+
+### 1.2 Outputs
+
+**[S]** `flake.nix:254–1119`. Systems: `flake.nix:262–264` —
+`linuxSystems = [ "x86_64-linux" ]`, `darwinSystems = [ "aarch64-darwin" ]`.
+
+| Output | line | Contents |
+|---|---|---|
+| `lib` | `466–500` | `defaultTherockSources`, `mkLiveIsoConfiguration`, `mkRocmTarget`, `rocmProviders`/`pythonProviders`/`pythonProviderStubs`, `therockTargets`, `bench`, and the four overlay builders **`mkRocmOverlay` (480), `mkPythonOverlay` (489), `mkPkgsOverlay` (490), `mkMtuneOverlay` (499)** |
+| `overlays` | `502–510` | `default` (`503–505`, `composeManyExtensions (mkOverlays { rocmTarget = defaultRocmTarget; })`), `python` (`506–508`), `spacemitK3` (`509`) |
+| `nixosModules` | `513–532` | `default`, `rpc-server`, `benchmark-executor`, `benchmark-runner`, `ec-su-axb35`, `fastflowlm`, `smu-exporter`, `npu-exporter`, `ryzenadj`, **`tuning` (530)**, `thunderbolt-ibverbs` |
+| `nixosConfigurations` | `534–536` | `live-iso` only |
+| `darwinModules` | `538–540` | `benchmark-executor` only |
+| `legacyPackages` | `545–553` | one pkgs set per `rocmTarget` (`gfx1010/1030/1036/1103/1151`) |
+| `benchmarks` | `555` | `perSystem mkBenchmarkSuites` (from `lib/bench`) |
+| `packages` | `557–757` | see below |
+| `apps` | `759–893` | wrappers over packages |
+| `checks` | `895–1083` | see below |
+| `devShells` | `1085–1111` | `default` only |
+| `formatter` | `1112` | `pkgs.nixfmt-tree` |
+
+**Notable packages [S]:** the Linux list is `flake.nix:617–645` (`vllm-rocm` at
+`642`), plus `flake.nix:712–715`:
+
+```nix
+"strix-halo-vllm-pair-bench-${s}" = pkgs.callPackage ./pkgs/strix-halo-vllm-pair-bench {
+  vllmPackage = vllmPairBenchEnv;
+  packageSuffix = s;
+};
+```
+
+where `s = defaultRocmTarget.packageSuffix` (`flake.nix:561`) = `gfx1151`
+(`pkgs/therock/targets.nix:42,54`). So the concrete attr is
+`packages.x86_64-linux.strix-halo-vllm-pair-bench-gfx1151`.
+
+**`checks` [S]** (`x86_64-linux` only, guarded at `flake.nix:897`):
+`deadnix` (1058), `statix` (1059), `nixfmt` (1060–1062),
+`cuda-host-driver-runtime` (1063), `package-surface` (1064),
+`vllm-pair-bench-dry-run` (1065–1080).
+
+The last is worth flagging for the campaign — **[S]** `flake.nix:1076–1079`:
+
+```
+bash -n ${./lib/bench/vllm-transport-matrix.sh}
+python3 -m py_compile ${./lib/bench/vllm-stream-client.py}
+strix-halo-vllm-pair-bench-ci --scenario qwen-peak --dry-run | tee "$out"
+grep -q "dry-run: not invoking" "$out"
+```
+
+It is a **syntax check plus a dry-run**, built against *fake* vLLM/RDMA/GCC
+stubs (`flake.nix:1021–1049`, comment at `1018–1020`: "so CI validates the
+wrapper, matrix script, and client without the heavy ROCm closure or a real
+two-host lab"). **No CI anywhere executes the harness against a real engine.**
+This is the reason the §4 metrology bug survived: the only automated coverage is
+`py_compile`.
+
+### 1.3 How a downstream flake points `vllm-src` at a FORK — exact mechanism
+
+There are **three** viable mechanisms; only the first two are license-clean and
+low-friction. Facts first, then the ranking.
+
+**Facts establishing the wiring [S]:**
+
+`flake.nix:365–371` — the *only* place `vllm-src` is consumed:
+
+```nix
+(import ./overlays/therock-vllm.nix {
+  inherit lib therockPythonConfig;
+  target = rocmTarget;
+  vllmSrc = inputs.vllm-src;
+  vllmVersion = "0.25.1";
+  enabled = enableTherockVllm;
+})
+```
+
+`overlays/therock-vllm.nix:22–24` — the src is decorated before use:
+
+```nix
+vllmSrcWithTag = vllmSrc // {
+  tag = vllmSrc.tag or "v${vllmVersion}";
+};
+```
+
+`overlays/therock-vllm.nix:242–251` — src and version are substituted onto
+nixpkgs' vllm:
+
+```nix
+(py.vllm.override {
+  rocmSupport = true;
+  cudaSupport = false;
+  gpuTargets = vllmGpuTargets;
+  rocmPackages = therockRocmPackages;
+  inherit (py) amdsmi;
+}).overridePythonAttrs
+  (old: {
+    version = vllmVersion;
+    src = vllmSrcWithTag;
+```
+
+`overlays/therock-vllm.nix:363–365` — what the overlay actually publishes:
+
+```nix
+lib.optionalAttrs hasTherockVllmInputs {
+  "vllm-rocm-therock-${s}" = vllmTherock;
+}
+```
+
+`overlays/pkgs.nix:332` — the unsuffixed alias, resolved through `final`:
+
+```nix
+      vllm-rocm = final."vllm-rocm-therock-${suffix}";
+```
+
+The `final.` reference is the load-bearing detail: because the alias is a
+fixpoint reference, **a later overlay that redefines
+`vllm-rocm-therock-gfx1151` is automatically picked up by `vllm-rocm`.**
+
+---
+
+**Mechanism A — `follows` on the flake input (cleanest; recommended primary).**
+
+Because `vllm-src` is a *top-level* input (`flake.nix:47–50`) and is threaded
+straight through at `flake.nix:368`, a standard input override reaches it:
+
+```nix
+inputs.vllm-fork = {
+  url = "github:<org>/vllm/<branch-with-PR53896+54129+patches>";
+  flake = false;
+};
+inputs.nix-strix-halo.url = "github:hellas-ai/nix-strix-halo";
+inputs.nix-strix-halo.inputs.vllm-src.follows = "vllm-fork";
+```
+
+- **Reaches:** `src` of `vllm-rocm-therock-gfx1151`, hence `vllm-rocm`, hence
+  the `vllmPairBenchEnv` symlinkJoin (`flake.nix:685–691`) that feeds the bench
+  driver. One override moves the whole chain. **[S]**
+- **Does NOT reach:** the version string. `vllmVersion = "0.25.1"` is a **string
+  literal at `flake.nix:369`**, not an input. It survives into
+  `version = vllmVersion` (`therock-vllm.nix:250`) and
+  `VLLM_VERSION_OVERRIDE = vllmVersion` (`therock-vllm.nix:296`). The fork will
+  therefore *report itself as 0.25.1* regardless of what it actually is. **[S]**
+- **Second-order gotcha [S]:** `therock-vllm.nix:23` computes
+  `tag = vllmSrc.tag or "v${vllmVersion}"`. A GitHub-tag input carries a `tag`
+  attr; a branch/rev-pinned fork generally does not, so the fallback stamps
+  `v0.25.1` onto the fork's src attrset. Whether nixpkgs' vllm expression
+  *consumes* `src.tag` at the pinned nixpkgs rev is **UNDETERMINED** (see §3
+  caveat) — but `VLLM_VERSION_OVERRIDE` at `:296` is the belt to that
+  suspenders, so the practical risk is cosmetic version reporting, not a build
+  break.
+- **Verdict:** use this, and additionally pin the reported version via
+  Mechanism C so telemetry does not lie about what is running.
+
+**Mechanism B — re-import the overlay from the input's store path (full control).**
+
+`overlays/therock-vllm.nix` is a plain function of
+`{ lib, target, vllmSrc, vllmVersion, therockPythonConfig ? …, enabled ? true }`
+(`therock-vllm.nix:1–8`). Downstream can call it with its own arguments:
+
+```nix
+nixpkgs.overlays = [
+  nix-strix-halo.overlays.default
+  (import "${nix-strix-halo}/overlays/therock-vllm.nix" {
+    inherit (nixpkgs) lib;
+    target  = nix-strix-halo.lib.therockTargets.rocmTargetsBySuffix.gfx1151;
+    vllmSrc = inputs.vllm-fork;
+    vllmVersion = "0.26.0.dev-flashnext";   # honest version
+  })
+];
+```
+
+- Gets **both** `src` and `version` right. **[S]** — signature at `:1–8`,
+  target accessor at `flake.nix:473` (`therockTargets = therockTargetConfig`)
+  and `pkgs/therock/targets.nix:4,41,57`.
+- Later overlay wins for `vllm-rocm-therock-gfx1151`; `vllm-rocm` follows via
+  the `final.` alias at `overlays/pkgs.nix:332`. **[S]**
+- **License-clean**: `"${nix-strix-halo}/overlays/therock-vllm.nix"` is a path
+  into the fetched input, evaluated in place. Nothing is copied into the
+  flashnext tree.
+- **Cost:** couples flashnext to that file's internal argument names. If
+  upstream renames `vllmSrc`, evaluation breaks loudly (good) rather than
+  silently.
+
+**Mechanism C — `overridePythonAttrs` on the finished package (patch injection).**
+
+```nix
+(final: prev: {
+  vllm-rocm = prev.vllm-rocm.overridePythonAttrs (old: {
+    version = "0.26.0.dev-flashnext";
+    src = inputs.vllm-fork;
+    patches = (old.patches or [ ]) ++ [ ./patches/pr53896.patch ];
+    env = (old.env or { }) // { VLLM_VERSION_OVERRIDE = "0.26.0.dev-flashnext"; };
+  });
+})
+```
+
+This is the answer to "can we inject `.patch` files without copying their nix
+code" — **yes**, see §3.
+
+**What is NOT available [S]:** there is no `overlays.therockVllm` and no
+`lib.mkTherockVllmOverlay`.
+
+```
+$ grep -rn 'mkTherockVllmOverlay\|therock-vllm' --include='*.nix' . | grep -v ./.git
+flake.nix:365:          (import ./overlays/therock-vllm.nix {
+```
+
+**One match, the internal call site.** Contrast with `lib` at `flake.nix:480–499`,
+which *does* export `mkRocmOverlay`/`mkPythonOverlay`/`mkPkgsOverlay`/`mkMtuneOverlay`.
+`README.md:184–185` [CL] confirms the intended composition set and likewise omits
+vLLM: *"For non-default providers compose your own overlays with `lib.mkRocmOverlay`,
+`lib.mkPythonOverlay`, and `lib.mkPkgsOverlay`."* **The vLLM overlay is the one
+piece of the stack with no supported parameterisation point.**
+
+---
+
+## 2. `overlays/therock-*.nix` — ROCm version and Python dependency assembly
+
+### 2.1 Which TheRock / ROCm version
+
+**[S]** `pkgs/therock/sources/rocm.json:2–9`:
+
+```json
+  "linux": {
+    "gfx1151": {
+      "url": "https://rocm.nightlies.amd.com/tarball-multi-arch/therock-dist-linux-gfx1151-7.15.0a20260719.tar.gz",
+      "hash": "sha256-04mWViYQujFAy+mbptQ8djGHgLFlmaQHFTfTW8LJ/MY=",
+      "version": "7.15.0a20260719",
+```
+
+**ROCm `7.15.0a20260719` — an AMD *nightly*, not a release.** `gfx1030` at
+`rocm.json:10–16` pins the same nightly date.
+
+**[S]** `pkgs/therock/sources/rocm-source.json` (for the from-source path) pins
+`https://github.com/ROCm/TheRock.git`, `ref refs/heads/main`,
+`rev 1de3171d00f6de55e9ed517dc6ca6e825d1e4b55`, `"version": "7.15"`.
+
+Two overlay files, trivially related:
+
+**[S]** `overlays/therock-rocm.nix` is **one line**:
+
+```nix
+args: import ../pkgs/therock args
+```
+
+(`wc -l` = 1 [M]. A pure re-export; the substance is `pkgs/therock/default.nix`.)
+
+### 2.2 How Python deps for vLLM are assembled — **wheels, not source**
+
+**[S]** `overlays/therock-python.nix:19–24` installs a
+`pythonPackagesExtensions` entry, gated on interpreter version at `:22`
+(`lib.versions.majorMinor pyprev.python.version == pythonConfig.pythonVersion`),
+and binds `wheels = final."therock-python-wheels-${s}"` at `:24`.
+
+**[S]** `overlays/therock-python.nix:53–61` — the substitution, the core fact:
+
+```nix
+          torch = wheels;
+          torchvision = wheels;
+          triton = wheels;
+          triton-no-cuda = wheels;
+          torchaudio = wheels;
+          rocm = wheels;
+          "rocm-sdk-core" = wheels;
+          "rocm-sdk-devel" = wheels;
+          "rocm-sdk-libraries-${s}" = wheels;
+```
+
+**torch / torchvision / torchaudio / triton are AMD-published prebuilt wheels**,
+all pointing at one derivation. **[S]**
+`pkgs/therock/sources/python-wheels.json` gives the URLs and hashes:
+
+- `torch-2.11.0+rocm7.15.0a20260719-cp313-cp313-linux_x86_64.whl`
+- `torchvision-0.26.0+rocm7.15.0a20260719-cp313-cp313-linux_x86_64.whl`
+- `torchaudio-2.11.0+rocm7.15.0a20260719-cp313-cp313-linux_x86_64.whl`
+- `triton-3.7.1+git0263a6a6.rocm7.15.0a20260719-cp313-…`
+- index: `https://rocm.nightlies.amd.com/whl-multi-arch/`, `"pythonTag": "cp313"`
+
+**[S]** `pkgs/therock/python-config.nix:4` — `pythonVersion = "3.13"`, giving
+`packagesAttr = "python313Packages"` (`:11`). **The entire stack is pinned to
+CPython 3.13.** Consistent with the `cp313` wheel tags.
+
+**vLLM itself is the exception — it is built from source.** `overlays/therock-vllm.nix:321`:
+
+```nix
+        requiredSystemFeatures = (old.requiredSystemFeatures or [ ]) ++ [ "big-parallel" ];
+```
+
+with the comment at `:317–320`: *"vllm-rocm compiles a few hundred HIP kernels
+through the TheRock toolchain — heavy enough to need a big-parallel builder."*
+So: **prebuilt wheels for the torch/triton substrate, from-source HIP compile
+for vLLM's own kernels.** This is the correct shape for the campaign (a fork's
+kernel changes will actually be compiled), but it means every fork bump pays a
+several-hundred-kernel HIP build.
+
+Additional dependency surgery in the same overlay, all **[S]**:
+
+- `therock-vllm.nix:28–40` — `mistral-common` force-pinned to `1.11.2` from
+  PyPI, `doCheck = false` (`:39`).
+- `therock-vllm.nix:41–46` — Triton *kernels* fetched **separately** from
+  `triton-lang/triton` rev `0263a6a6203cf27c441c57a6c808ea87ffb8f654`, surfaced
+  via `TRITON_KERNELS_SRC_DIR` (`:299`). Note this rev matches the
+  `+git0263a6a6` in the triton wheel tag — deliberately coherent.
+- `therock-vllm.nix:47–60` — a `withSetuptools80` shim swapping `setuptools` for
+  `py.setuptools_80` in grpcio-tools / setuptools-scm / setuptools-rust.
+- `therock-vllm.nix:63–90` — `therockRocmPackages`: **26 ROCm component attrs
+  (`clr`, `hipblaslt`, `rccl`, `composable_kernel`, …) all aliased to the single
+  `sdk` derivation** (`:15–20`), which is `therock-rocm-gfx1151` with
+  `localGpuTargets`/`gpuTargets` forced to the target's build targets.
+- `therock-vllm.nix:92–114` — **`dropVllmDependencyNames`, 22 entries** stripped
+  from vLLM's dependency closure: `amd-quark`, `apache-tvm-ffi`, `bitsandbytes`,
+  `conch-triton-kernels`, `datasets`, `fastsafetensors`, `mistral-common`,
+  `mistral_common`, `mistralai`, `opencv-python-headless`, `outlines`, `peft`,
+  `pyarrow`, `pytest-asyncio`, `runai-model-streamer`, `runai_model_streamer`,
+  `tensorizer`, `tilelang`, `timm`, `torchcodec`, `xformers`.
+- `therock-vllm.nix:126–136` — `unsupportedFeatureReasons`, 9 features hard-refused
+  with explanations. **Directly relevant to the campaign:** `aiter` is refused
+  (`:127`, *"AITer needs a separately packaged ROCm aiter build and upstream only
+  enables it on MI300-class targets"*) and `rixl` is refused (`:132`, *"RIXL needs
+  separate ROCm RIXL/UCX/RDMA packaging and is only used by KV-transfer/disaggregated
+  serving paths"*). Enabling either trips the assertion at `:239–241`.
+- `therock-vllm.nix:234–238` — three hard asserts: `tritonSupport`,
+  `tritonKernelsSupport`, and `otelSupport` **must all be true**.
+
+### 2.3 What would need to change for ROCm 10
+
+**No single knob.** Five coordinated edits, all **[S]** on file structure:
+
+1. **`pkgs/therock/sources/rocm.json`** — `url`/`hash`/`version` per target.
+   Regenerated by `pkgs/therock/scripts/update-rocm.py`; **[S]** its docstring
+   (`:3–8`) says *"The TheRock nightly index is intentionally kept out of Nix
+   evaluation. Run this script manually when bumping the opt-in preview SDK,
+   review the diff, then commit the updated JSON."* `BASE_URL` at `:20` is
+   `https://rocm.nightlies.amd.com/tarball-multi-arch/`. **A ROCm 10 tarball must
+   exist at that nightly index under a matching target slug** (`TARGET_SLUGS`,
+   `:21–28`) or the script has nothing to find.
+2. **`pkgs/therock/sources/python-wheels.json`** — the torch/triton/vision/audio
+   wheel set must be *republished by AMD for ROCm 10 at cp313*. If AMD moves the
+   nightly wheels to cp314, `python-config.nix:4` must change too, which
+   re-resolves `python313Packages` → `python314Packages` across the whole
+   overlay stack (`therock-vllm.nix:21`, `flake.nix:689`, …).
+3. **`pkgs/therock/sources/rocm-source.json` + the 33 generated `flake.nix`
+   inputs (`flake.nix:74–~250`)** — regenerated *atomically* by
+   `pkgs/therock/scripts/update-source-tree.py` (per the banner at
+   `flake.nix:72–73` and the dependabot ignore at `.github/dependabot.yml:17`).
+   Hand-editing these is explicitly out of bounds.
+4. **`pkgs/therock/rocm-modules/*`** — ~60 module dirs carrying **~40 patches**
+   against ROCm internals (`therock/rocm-from-source/patches/*.patch`,
+   `rocm-modules/*/*.patch|*.diff`). A major-version ROCm bump is exactly where
+   these rot.
+5. **`overlays/therock-vllm.nix:269`** — `substituteInPlace pyproject.toml
+   --replace-fail '"torch == 2.11.0"' '"torch"'`. **`--replace-fail` means this
+   aborts the build if the exact string is absent.** A ROCm 10 wheel set will
+   ship a different torch version and vLLM will pin differently; this line is a
+   guaranteed break. The same brittleness applies to every other
+   `--replace-fail` in `postPatch` (`:259`, `:263`, `:268`, `:271`, `:279`, `:288`).
+
+**Assessment [S-derived]:** ROCm 10 is a *fork-and-maintain* undertaking against
+this repo, not a config change. The campaign should assume the pinned ROCm
+7.15.0a20260719 nightly for its horizon and treat ROCm 10 as out of scope.
+
+---
+
+## 3. THE vLLM PACKAGE EXPRESSION
+
+### 3.1 How it is built
+
+**[S]** `overlays/therock-vllm.nix:242–248` — it is **not** a fresh expression.
+It takes **nixpkgs' `python313Packages.vllm`**, applies `.override` for the ROCm
+knobs, then `.overridePythonAttrs` for everything else:
+
+```nix
+    (py.vllm.override {
+      rocmSupport = true;
+      cudaSupport = false;
+      gpuTargets = vllmGpuTargets;
+      rocmPackages = therockRocmPackages;
+      inherit (py) amdsmi;
+    }).overridePythonAttrs
+      (old: {
+        version = vllmVersion;
+        src = vllmSrcWithTag;
+```
+
+`vllmGpuTargets = target.buildTargets` (`:16`). For gfx1151,
+`pkgs/therock/targets.nix:41–52` sets `packageSuffix = "gfx1151"`,
+`hsaOverride = "11.5.1"`, and `rocmGpuTargets = [ "gfx1151" "gfx90a" ]` with the
+comment at `:46–47` that gfx90a is *"a composable_kernel build workaround"*.
+
+**[S]** `flake.nix:685–691` — how the bench driver gets a vLLM *with Ray*, and
+the reasoning:
+
+```nix
+          # Two-host vLLM transport-matrix driver. The driver only needs the
+          # vLLM closure to expose both `vllm` and `ray`, so join the default
+          # ROCm vLLM package with ray rather than baking ray into vllm-rocm.
+          vllmPairBenchEnv = pkgs.symlinkJoin {
+            name = "vllm-rocm-${s}-ray-env";
+            paths = [
+              pkgs.vllm-rocm
+              pkgs.${therockPythonConfig.packagesAttr}.ray
+            ];
+          };
+```
+
+**This is a `symlinkJoin`, not a shared Python environment.** Ray and vLLM are
+two independently-built closures whose `bin/` and `lib/python3.13/site-packages/`
+trees are symlink-merged. It works because both resolve their own deps through
+their own wrappers — but it is a fragile seam if the campaign needs Ray and vLLM
+to agree on a shared transitive dep version.
+
+### 3.2 Default version
+
+**`0.25.1`**, from **two independent places that must agree**:
+
+- **[S]** `flake.nix:48` — `url = "github:vllm-project/vllm/v0.25.1"` (the source)
+- **[S]** `flake.nix:369` — `vllmVersion = "0.25.1"` (the string)
+
+These are **not coupled**. Nothing asserts the src tag matches the version
+string. Overriding one via `follows` silently desynchronises them (§1.3
+Mechanism A).
+
+Consumed at `therock-vllm.nix:250` (`version`), `:296`
+(`VLLM_VERSION_OVERRIDE`), and `:23` (`tag` fallback).
+
+> **[CL] Doc/source contradiction:** `README.md:22` states
+> `| `vllm-rocm` | source-built vLLM 0.23 against TheRock |`. The flake says
+> **0.25.1**. The README table is stale by two minor versions. **Trust
+> `flake.nix:48,369`; do not quote the README.**
+
+### 3.3 Patches applied
+
+**[S]** `overlays/therock-vllm.nix:253–255` — the overlay **adds zero patches**.
+It only *subtracts* one:
+
+```nix
+        patches = builtins.filter (
+          patch: !(lib.hasSuffix "0006-drop-rocm-extra-reqs.patch" (toString patch))
+        ) (old.patches or [ ]);
+```
+
+So the applied set is *nixpkgs' vllm patch list, minus `0006`*.
+
+**[S-local, indicative — see caveat]** Reading the **local system nixpkgs**
+(`/nix/store/llgwlxshmy0ifvxh7f8wq53vk5x7vd13-source`, `.version` = `26.11`),
+`pkgs/development/python-modules/vllm/default.nix:348–353`:
+
+```nix
+  patches = [
+    ./0002-setup.py-nix-support-respect-cmakeFlags.patch
+    ./0003-propagate-pythonpath.patch
+    ./0005-drop-intel-reqs.patch
+    ./0006-drop-rocm-extra-reqs.patch
+  ];
+```
+
+and `:338` — `version = "0.16.0"`.
+
+> **CAVEAT (important):** that store path is **this machine's system nixpkgs, not
+> the flake's pinned `61b7c44c4073` (2026-07-18)**. The exact patch list at the
+> pinned rev is **UNDETERMINED**. What would settle it: `nix flake archive` /
+> `nix build .#…vllm.src` against the pinned rev, or reading
+> `pkgs/development/python-modules/vllm/default.nix` at `61b7c44c4073`. I did not
+> fetch it (analysis-only, no builds). The *filter target* — a file literally
+> named `0006-drop-rocm-extra-reqs.patch` — is present in both, so the mechanism
+> is sound; only the exact surviving list is uncertain.
+
+**[S-derived] The structural hazard the campaign must price in:** nixpkgs' vllm
+is **0.16.0**; the overlay swaps in src **0.25.1** — a **nine-minor-version
+jump** — while *inheriting 0.16-era patches*. Those three patches must still
+apply cleanly to a 0.25.1 tree. They evidently do today (the repo builds), but a
+fork moving further from 0.25.1 raises the odds of a patch-apply failure that
+will read as a confusing "hunk FAILED" in a file nobody in the campaign wrote.
+
+**[S] `postPatch` is REPLACED, not appended** — `therock-vllm.nix:257`:
+
+```nix
+        postPatch = ''
+```
+
+Plain assignment. Not `(old.postPatch or "") + …`. Comparing against local
+nixpkgs `:356+` (`rm vllm/third_party/pynvml.py`, the same two
+`substituteInPlace` calls), the overlay's block at `:258–266` **re-implements
+nixpkgs' postPatch verbatim** and then adds four more edits (`:268–292`). This is
+deliberate supersession, but it means **any downstream `overridePythonAttrs` that
+assigns `postPatch` rather than appending will silently drop all of it** —
+including the `registry.py` env fix at `:288–291`, whose comment (`:284–287`)
+warns it is load-bearing: *"Upstream replaces its entire environment with
+PYTHONPATH, which strips the TheRock wheel runtime's LD_LIBRARY_PATH and makes
+torch fail to load libstdc++ before an architecture can even be inspected."*
+
+### 3.4 Is a patch-overlay list exposed? — **NO, but injection works anyway**
+
+**[S]** `mkVllmTherock`'s complete signature, `therock-vllm.nix:138–156`:
+
+```nix
+  mkVllmTherock =
+    {
+      aiterSupport ? false,
+      audioSupport ? true,
+      benchSupport ? true,
+      fastsafetensorsSupport ? false,
+      flashinferSupport ? false,
+      grpcSupport ? false,
+      helionSupport ? false,
+      instanttensorSupport ? false,
+      otelSupport ? true,
+      rixlSupport ? false,
+      runaiSupport ? false,
+      tensorizerSupport ? false,
+      tritonSupport ? true,
+      tritonKernelsSupport ? true,
+      videoSupport ? false,
+      zenSupport ? false,
+    }:
+```
+
+**Sixteen parameters, all booleans, all feature toggles.** No `extraPatches`, no
+`patches`, no `src`, no `version`, no `postPatch` hook.
+
+**[S]** `therock-vllm.nix:361`:
+
+```nix
+  vllmTherock = lib.makeOverridable mkVllmTherock { };
+```
+
+So `pkgs.vllm-rocm.override { … }` accepts **only those 16 booleans** — and 9 of
+them are hard-refused by the assertion at `:239–241`.
+
+**ANSWER TO THE CAMPAIGN'S QUESTION — yes, `.patch` files can be injected
+without copying any of their Nix code**, via `overridePythonAttrs` on the
+finished derivation. The result of `mkVllmTherock` is an ordinary
+`buildPythonPackage` derivation, so:
+
+```nix
+(final: prev: {
+  vllm-rocm = prev.vllm-rocm.overridePythonAttrs (old: {
+    src      = inputs.vllm-fork;
+    version  = "0.26.0.dev-flashnext";
+    patches  = (old.patches or [ ]) ++ [
+      ./patches/pr-53896.patch
+      ./patches/pr-54129.patch
+    ];
+    postPatch = (old.postPatch or "") + ''
+      # append only — never assign, see §3.3
+    '';
+    env = (old.env or { }) // { VLLM_VERSION_OVERRIDE = "0.26.0.dev-flashnext"; };
+  });
+})
+```
+
+Three rules for the campaign, each grounded above:
+
+1. **Always `(old.patches or [ ]) ++ …`** — assignment discards the inherited
+   nixpkgs patches the build depends on.
+2. **Always `(old.postPatch or "") + …`** — `therock-vllm.nix:257` assigns, and
+   `:288–291` is load-bearing.
+3. **Set `VLLM_VERSION_OVERRIDE` alongside `version`** — `therock-vllm.nix:296`
+   is what the running server reports. Changing `version` alone leaves the
+   process announcing 0.25.1.
+
+**Recommended combination:** Mechanism A (`follows`, for the fork src, so the
+whole chain including `vllmPairBenchEnv` moves) **+** Mechanism C
+(`overridePythonAttrs`, for `.patch` files and an honest version). Mechanism B
+is the fallback if the campaign needs a genuinely different `target`.
+
+---
+
+## 4. `strix-halo-vllm-pair-bench` + `modules/benchmark-*.nix`
+
+### 4.1 What the two-host TP=2 harness actually does
+
+**[S]** `pkgs/strix-halo-vllm-pair-bench/default.nix:25` — it is a
+`writeShellApplication`, i.e. **a bash script, not a NixOS service**. Runtime
+inputs at `:28–33`: `coreutils`, `openssh`, `rsync`, `nixVersions.stable`.
+
+Flow, all **[S]**:
+
+1. Parse `--scenario` + overrides (`:84–100`).
+2. Select the scenario's model/transport/concurrency block (`:102–158`).
+3. Preflight six required paths (`:166–175`) — `$GCC_PREFIX/bin/gcc`,
+   `$RDMA/lib`, `$VLLM_ENV/bin/vllm`, `$VLLM_ENV/bin/ray`, and both bench
+   scripts. Missing → `exit 2`.
+4. Emit a ~40-line `REMOTE_ENV` heredoc (`:199–242`).
+5. `--dry-run` short-circuits at `:248–251` printing `(dry-run: not invoking)` —
+   the exact string CI greps for (`flake.nix:1079`).
+6. **`nix copy --no-check-sigs --to "ssh://$host"`** the four closures to *both*
+   hosts (`:263–267`).
+7. `scp` the env file to the master, then
+   **`ssh "$MASTER" "set -a; . …/env; set +a; exec bash $bench_script_q"`** (`:279`).
+8. `rsync` results back (`:283`).
+
+**The actual TP=2 topology lives in `lib/bench/vllm-transport-matrix.sh`** (691
+lines [M]). **[S]** `:568–606`:
+
+- `transport == "solo"` (`:568–578`): plain single-host `vllm serve` with
+  `NCCL_IB_DISABLE=1`.
+- otherwise (`:579–605`), the pair path:
+  - **`:586–587`** — `ray start --head --port=6379 --node-ip-address="$head" --num-gpus=1 --include-dashboard=false --disable-usage-stats` on the **coordinator**.
+  - **`:588–589`** — one `ssh -n` invocation starting `ray start --address=$head:6379 --node-ip-address=$worker --num-gpus=1` on the **worker**.
+  - **`:590`** — `sleep 2`. A fixed sleep, not a readiness probe.
+  - **`:592–605`** — `vllm serve "$model" --tensor-parallel-size 2 --distributed-executor-backend ray --host 0.0.0.0 --port "$PORT"`.
+
+So: **the "pair / coordinator-worker over TCP rail" topology is a Ray cluster
+stood up by SSH from a shell script.** Each node advertises `--num-gpus=1`; vLLM
+shards TP=2 across them via the Ray executor backend.
+
+**[S]** `:626–641` — the client is then invoked against **`http://127.0.0.1:$PORT/v1/completions`**,
+i.e. the coordinator's own loopback.
+
+**[S]** `:619–624` — the four transports:
+
+```
+    lan_tcp)    socket_ifname="$LAN_IFNAME/$REMOTE_LAN_IFNAME" ;;
+    usb4_rdma)  socket_ifname="$LAN_IFNAME/$REMOTE_LAN_IFNAME"; rdma_hca=$(resolve_usb4_hca) ;;
+    tb_tcp)     socket_ifname="$TB_IFNAME/$REMOTE_TB_IFNAME" ;;
+    tb_rxe)     socket_ifname="$TB_IFNAME/$REMOTE_TB_IFNAME"; rdma_hca=$RXE_HCA ;;
+```
+
+### 4.2 Config surface
+
+**[S] CLI flags** — `default.nix:86–97`: `--scenario`, `--master`, `--worker`,
+`--usb4-hca`, `--out`, `--dry-run`, `--extra-transports`, `--vllm-env`,
+`--rdma-prefix`, `--gcc-prefix`, `--bench-dir`, `-h|--help`.
+
+**[S] Nix-level args** — `default.nix:1–15`: `vllmPackage` and `packageSuffix`
+are required; **`vllmTransportMatrix` (`:13`) and `vllmStreamClient` (`:14`) are
+overridable path arguments**, defaulting to `../../lib/bench/*`. **This is the
+clean seam for §4.4** — the campaign can `callPackage` the driver with its own
+corrected client, no forking of the Nix expression.
+
+**[S] Hardcoded defaults that are hellas lab facts, not ours** — `default.nix:39–41`:
+
+```
+    MASTER="grw@strix-1.lan.satanic.link"
+    WORKER="grw@strix-2.lan.satanic.link"
+    USB4_HCA="usb4_rdma0,usb4_rdma1,usb4_rdma5,usb4_rdma6"
+```
+
+and `:204–205` — `LAN_IFNAME=br0.lan`, `TB_IFNAME=thunderbolt0`. `--master` /
+`--worker` / `--usb4-hca` are overridable; **`LAN_IFNAME` and `TB_IFNAME` are
+not exposed as flags** — they are baked into the `REMOTE_ENV` heredoc. Changing
+them requires either `--bench-dir` with a modified script or setting them in the
+environment ahead of the matrix script (which reads `${VAR:-default}`).
+
+**[S] Five scenarios** (`default.nix:102–158`): `qwen-peak`,
+`llama-tp2-win`, `qwen35-122b-awq-capacity`, `qwen35-122b-awq-prime`,
+`minimax-m27-awq-strix-2h`. The last (`:141–153`) is the interesting one for a
+large-model campaign: `MAX_MODEL_LEN=196608`, `MAX_NUM_SEQS=2`,
+`MAX_NUM_BATCHED_TOKENS=20480`, `--gpu-memory-utilization 0.92`, and
+`SCENARIO_EXTRA_ENV` (`:151`) setting `VLLM_ROCM_USE_AITER=0`,
+`TORCHDYNAMO_DISABLE=1`, `VLLM_USE_DEEP_GEMM=0`, `RAY_CGRAPH_get_timeout=1800`, etc.
+
+**[S] Baseline `REMOTE_ENV`** (`default.nix:223–239`) fixes NCCL/RCCL and Ray
+knobs: `NCCL_IB_GID_INDEX=1`, `NCCL_NET_MERGE_LEVEL=LOC`,
+`NCCL_MIN_NCHANNELS=4`/`NCCL_MAX_NCHANNELS=4`,
+`NCCL_IB_QPS_PER_CONNECTION=1`, `NCCL_IB_SPLIT_DATA_ON_QPS=0`,
+`CUDA_/HIP_/ROCR_VISIBLE_DEVICES=0`, the three
+`RAY_EXPERIMENTAL_NOSET_*_VISIBLE_DEVICES=1`, and
+`VLLM_USE_RAY_V2_EXECUTOR_BACKEND=0`.
+
+**[S]** `vllm-transport-matrix.sh:188–243` declares **`TUNE_VARS`, 55 names**
+(NCCL/RCCL chunk & channel sizing, `HSA_NO_SCRATCH_RECLAIM`, `HSA_ENABLE_INTERRUPT`,
+GDRCopy, the `VLLM_USE_RAY_*` family). **[S]** `:244–248` — these are
+**pass-through only**:
+
+```bash
+for name in "${TUNE_VARS[@]}"; do
+  if [[ -v "$name" ]]; then
+    tune_env+=("$name=${!name}")
+  fi
+done
+```
+
+Only forwarded if *already set* in the caller's environment; the script sets no
+defaults for them. Good news for the campaign: **55 tuning knobs are reachable
+from outside without touching their code.**
+
+### 4.3 `modules/benchmark-*.nix` — NOT serving infrastructure
+
+**[S]** `modules/benchmark-executor.nix` (56 lines [M]) configures **Nix
+distributed builds**: `nix.distributedBuilds = true`, `nix.buildMachines`,
+`settings.builders-use-substitutes` (`:44–48`), plus
+`programs.ssh.knownHosts` (`:50–54`). Line 1 comment: *"Shared module for
+machines that submit benchmark builds to remote runners."*
+
+**[S]** `modules/benchmark-runner.nix` (351 lines [M]) is the receiving side:
+`nix.settings.system-features` / `extra-sandbox-paths` / `sandbox = "relaxed"`
+(`:308–312`), a models tmpfiles rule (`:314–316`), a device-ACL activation
+script (`:323–325`), and udev `setfacl` rules exposing `/dev/kfd`, `/dev/dri/*`,
+`/dev/infiniband/*`, `/dev/accel/*`, nvidia nodes to the build sandbox
+(`:327–349`). Two assertions at `:292–306` (IOMMU-off requirement; NPUs
+incompatible with IOMMU-off).
+
+**These modules run benchmarks *as Nix derivations in a build sandbox on one
+host*.** They have nothing to do with the two-host Ray pair, which is
+SSH-orchestrated outside Nix entirely.
+
+### 4.4 `vllm-stream-client.py:297` — VERIFY AND RE-PIN
+
+**Campaign claim:** *"assigns `prefill_mean_s` from the TTFT series, so the
+shipped harness cannot separate prefill from queueing."*
+
+**VERDICT: CONFIRMED, and the line number is still exactly 297.**
+
+**[M] File identity at time of reading:**
+
+```
+$ md5sum lib/bench/vllm-stream-client.py
+aadc50c1c653b8cc58571313ba1fe070
+
+$ wc -l -c lib/bench/vllm-stream-client.py
+  374 11903
+```
+
+**[M] Last modification:** `git log -1 -- lib/bench/vllm-stream-client.py` →
+`8db2c08  2026-06-12 09:03:59 +0200  "bench: add Strix Halo two-host vLLM pair benchmark (#79)"`.
+**The file has been touched exactly once, at introduction.** Line 297 has not
+moved since the campaign recorded it, and there is no upstream fix in flight.
+
+**[S] The defect, `lib/bench/vllm-stream-client.py:294–297`:**
+
+```python
+            "ttft_mean_s": fmt(statistics.mean(ttfts) if ttfts else None),
+            "ttft_p50_s": fmt(percentile(ttfts, 50)),
+            "ttft_p95_s": fmt(percentile(ttfts, 95)),
+            "prefill_mean_s": fmt(statistics.mean(ttfts) if ttfts else None),
+```
+
+Line 297 is **character-identical to line 294**. `prefill_mean_s` is not a
+measurement — it is a duplicate of `ttft_mean_s` under a different column name.
+Both are `statistics.mean(ttfts)` over the same list built at `:254–257`.
+
+**[S] Why the number cannot be a prefill time — the measurement itself,
+`:144–145` and `:174–175`:**
+
+```python
+    barrier.wait()
+    start = time.perf_counter()
+...
+                        if first_token is None:
+                            first_token = time.perf_counter()
+```
+
+and `:182–183`:
+
+```python
+        ttft = None if first_token is None else first_token - start
+        decode = None if ttft is None else max(0.0, duration - ttft)
+```
+
+`start` is stamped **client-side immediately after a barrier release** (`:144`),
+i.e. when N concurrent workers are simultaneously unleashed. `first_token` is
+stamped when the **first non-empty SSE `text` chunk** arrives (`:171–176`). The
+interval therefore contains: client-side request construction, network RTT,
+**vLLM scheduler queue wait**, prompt prefill, the first decode step, and SSE
+framing/flush. At `--concurrency 256` (`default.nix:106,113`) the queue term
+dominates and is not separable.
+
+**[S] The authors document this — the module docstring, `:4–7`:**
+
+```
+This measures what the OpenAI-compatible completions API exposes directly:
+time-to-first-token and total request time. In the CSV, prefill time is the
+TTFT proxy: it includes queueing plus prompt prefill plus the first decode
+step. Decode time is total time after TTFT.
+```
+
+**Refined characterisation for the campaign record:** this is not a *bug* in the
+sense of an accident — it is a **knowingly-shipped proxy with a misleading
+column name**. `prefill_mean_s` appears in `FIELDS` at `:52`, adjacent to the
+three `ttft_*` columns at `:49–51`, so a CSV consumer reasonably reads it as an
+independent measurement. It is not. **Any campaign conclusion that reads
+`prefill_mean_s` as prefill time is invalid at concurrency > 1.**
+
+**[S] Corroborating absence:** grepping the file for `prefill|ttft|queue`
+returns **no** reference to vLLM's `/metrics` endpoint,
+`vllm:time_to_first_token_seconds`, or any scheduler-queue histogram. The client
+never queries server-side telemetry. Separating prefill from queueing requires
+scraping `/metrics` (or `--collect-detailed-traces`), which this harness does
+not do.
+
+**Fix path that avoids copying their code [S]:** `default.nix:14` exposes
+`vllmStreamClient ? ../../lib/bench/vllm-stream-client.py` as a package
+argument. The campaign can write its own client and `callPackage` the driver
+with `vllmStreamClient = ./flashnext-stream-client.py;` — a clean parameter
+override, no forking of the `.nix`, no copying of the `.py`.
+
+---
+
+## 5. THE FORBIDDEN TUNING MODULE
+
+**Identified: `nixosModules.tuning` → `modules/tuning.nix`.**
+
+**[S]** `flake.nix:530` — `tuning = import ./modules/tuning.nix;`
+
+**[M]** The file is **33 lines**. **[S]** In full:
+
+```nix
+{ pkgs, ... }:
+{
+  boot = {
+    kernelParams = [
+      # GTT: 80GB (leaves ~30GB system RAM for OS/apps)
+      "ttm.pages_limit=20971520"
+    ];
+    tmp.useTmpfs = true;
+  };
+
+  hardware.firmware = [ pkgs.strix-halo-mes-firmware ];
+
+  services.tuned = {
+    enable = true;
+    profiles = {
+      strix-halo = {
+        main = {
+          include = "accelerator-performance";
+        };
+      };
+    };
+  };
+
+  systemd.services.tuned-set-profile = {
+    description = "Set TuneD profile";
+    after = [ "tuned.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.tuned}/bin/tuned-adm profile accelerator-performance";
+    };
+  };
+}
+```
+
+### Why it is forbidden — four independent collisions
+
+**1. GTT sizing, unconditionally, with no option. [S] `modules/tuning.nix:4–7`.**
+
+`ttm.pages_limit=20971520` — **[M]** `20971520 × 4096 = 85,899,345,920 bytes =
+exactly 80 GiB`, matching the comment at `:5`. This is a bare
+`boot.kernelParams` **list append with no `mkDefault`, no `mkOption`, no
+`enable` flag.** NixOS merges `boot.kernelParams` by concatenation, so importing
+this alongside a dotfiles module that also sets a GTT limit yields **two
+`ttm.pages_limit=` tokens on the same kernel command line**. The kernel takes the
+last occurrence; ordering is a function of module merge order, i.e.
+**effectively nondeterministic from the operator's point of view.** No
+evaluation error will warn you — the build succeeds and the machine boots with
+whichever value won. *This is precisely the "would fight the dotfiles values"
+failure the Forbidden list anticipates, and it fails silently.*
+
+**[M] Repo-wide scan — this is the ONLY GTT/TTM setter in the tree:**
+
+```
+$ grep -rn 'pages_limit\|gttsize\|ttm\.\|amdttm\|GTT' --include='*.nix' --include='*.md' .
+pkgs/amdtop/default.nix:39:      accel class. Reports per-core CPU history, VRAM/GTT pools, memory
+modules/tuning.nix:5:      # GTT: 80GB (leaves ~30GB system RAM for OS/apps)
+modules/tuning.nix:6:      "ttm.pages_limit=20971520"
+```
+
+`amdtop` is a description string. **`modules/tuning.nix:6` is the single
+substantive hit.** So the forbidden surface is small and precisely located — but
+it is also *unavoidable*: there is no way to import the module and decline the
+GTT parameter.
+
+> **Refinement worth recording:** the module sets **`ttm.pages_limit`**, not
+> `amdgpu.gttsize` and not `amdttm.pages_limit`. If the flashnext dotfiles set
+> GTT via a *different* knob, the two will not textually collide — they will
+> both apply, and the effective limit becomes the more restrictive of the two,
+> which is harder to diagnose than a duplicate. Worth confirming which knob the
+> dotfiles use before assuming "no overlap = safe."
+
+**2. The 80 GiB figure encodes a 128 GB host. [S] `:5`** — *"leaves ~30GB system
+RAM for OS/apps"* implies 110 GB usable ≈ a 128 GB Strix Halo. On a differently
+configured host the number is simply wrong, and wrong in the direction that
+starves the OS.
+
+**3. TuneD is enabled globally and forced with a oneshot. [S] `:13–32`.**
+`services.tuned.enable = true` (`:14`) plus a `systemd.services.tuned-set-profile`
+unit (`:24–32`) that runs `tuned-adm profile accelerator-performance` at every
+boot, `wantedBy = multi-user.target`. This **overrides any power/CPU-governor
+policy** the dotfiles establish, at boot, every boot. If the dotfiles also
+declare `services.tuned`, that is a genuine option-merge conflict — this one at
+least fails loudly.
+
+**4. Firmware injection. [S] `:11`** —
+`hardware.firmware = [ pkgs.strix-halo-mes-firmware ];`. Pulls an out-of-tree
+MES firmware blob into `/run/current-system/firmware`, changing GPU
+initialisation. Also list-merged, also unconditional.
+
+### The trap: the module is *advertised* as safe to import
+
+**[S]** `README.md:196` — *"`nixosModules.ec-su-axb35`, `ryzenadj`, `tuning` —
+Strix Halo hardware modules"*, listed without caveat.
+
+**[S]** `examples/configuration.nix:17–25` — the shipped example **imports it**:
+
+```nix
+  imports = [
+    "${modulesPath}/installer/cd-dvd/installation-cd-base.nix"
+
+    inputs.self.nixosModules.default
+    inputs.self.nixosModules.tuning
+    inputs.self.nixosModules.ec-su-axb35
+    inputs.self.nixosModules.rpc-server
+    inputs.self.nixosModules.fastflowlm
+  ];
+```
+
+**[S]** `flake.nix:459–462` — that file *is* `nixosConfigurations.live-iso`.
+
+**So the upstream-blessed pattern is exactly what the Forbidden list prohibits.**
+Anyone following the README or copying the example into a host closure imports
+the GTT override by accident. **The Forbidden-list entry is well-founded and
+should be enforced mechanically, not by convention** — e.g. an assertion in the
+flashnext host modules that `boot.kernelParams` contains at most one
+`ttm.pages_limit=` token.
+
+**Safe alternative [S]:** `nixosModules.default` (`flake.nix:514–521`) is inert
+with respect to tuning — it only imports the thunderbolt-ibverbs module and
+appends `self.overlays.default` to `nixpkgs.overlays`. **That is the only module
+the campaign needs to get `pkgs.vllm-rocm`.**
+
+---
+
+## 6. SERVING MODULES — is the pair topology expressible?
+
+### 6.1 What serving modules exist
+
+**[M] Decisive negative:**
+
+```
+$ grep -rn 'vllm' modules/
+NO MATCH in modules/
+```
+
+**There is no vLLM NixOS module of any kind — no systemd unit, no container, no
+option namespace.** The string `vllm` does not appear anywhere under `modules/`.
+
+**[S]** The complete `nixosModules` set (`flake.nix:513–532`), classified:
+
+| Module | Kind | Serving? |
+|---|---|---|
+| `default` (`514–521`) | overlay application only | no |
+| `rpc-server` (`522`) | **systemd units — llama.cpp `rpc-server`** | yes, llama.cpp only |
+| `benchmark-executor` (`523`) | Nix distributed-build client | no |
+| `benchmark-runner` (`524`) | Nix builder capabilities + udev ACLs | no |
+| `ec-su-axb35` (`525`) | EC driver | no |
+| `fastflowlm` (`526`) | **systemd unit — FastFlowLM NPU server** | yes, NPU only |
+| `smu-exporter` (`527`) | Prometheus exporter | no |
+| `npu-exporter` (`528`) | Prometheus exporter | no |
+| `ryzenadj` (`529`) | power tuning | no |
+| `tuning` (`530`) | **FORBIDDEN — §5** | no |
+| `thunderbolt-ibverbs` (`531`) | re-export from the input | no |
+
+**Only two modules manage an inference server, and neither is vLLM:**
+
+- **[S]** `modules/rpc-server.nix` — `options.services.llama-cpp-rpc-servers`
+  (`:114–117`), `systemd.services = mapAttrs' …` (`:159–162`), unit description
+  *"llama.cpp RPC server (${name})"* (`:162`), `ExecStart` at `:170`. Options at
+  `:20–106`: `package`, `threads`, `device`, `host`, `port`, `enableCache`,
+  `cacheDirectory`, `extraArgs`, `environment`, `restart`, `user`, `group`,
+  `openFirewall`. **This is llama.cpp's RPC worker protocol — a completely
+  different distribution mechanism from vLLM+Ray.** Not reusable.
+- **[S]** `modules/fastflowlm.nix` — `mkEnableOption "FastFlowLM NPU inference
+  server"` (`:23`), `systemd.services.fastflowlm` (`:187`), `ExecStart` (`:202`),
+  `port` (`:59`), `openFirewall` (`:148`),
+  `networking.firewall.allowedTCPPorts` (`:270`). XDNA2 NPU, OpenAI-compatible.
+  **Structurally the closest precedent for a vLLM unit, but for different
+  hardware and a different binary.**
+
+### 6.2 Is the coordinator/worker pair expressible with them?
+
+**No. [S-derived]** The pair topology exists **only** as imperative shell:
+
+- Ray head start — `lib/bench/vllm-transport-matrix.sh:586–587`
+- Ray worker start **over `ssh`** — `:588–589`
+- `sleep 2` as the sole synchronisation — `:590`
+- `vllm serve --tensor-parallel-size 2 --distributed-executor-backend ray` — `:598–599`
+- teardown — `:162` (`ssh … "$VLLM_ENV/bin/ray stop --force"`)
+
+Nothing in `nixosModules` models a Ray head, a Ray worker, a TP degree, a rail
+selection, or a coordinator/worker role. `benchmark-runner` and
+`benchmark-executor` (§4.3) look superficially like fleet modules but configure
+**Nix remote builders**, not runtime services.
+
+### 6.3 Conclusion for the campaign
+
+**flashnext must write its own systemd units.** Concretely, the repo gives:
+
+| Need | From nix-strix-halo | Campaign writes |
+|---|---|---|
+| ROCm vLLM package | **`pkgs.vllm-rocm`** via `nixosModules.default` [S `flake.nix:514–521`, `overlays/pkgs.rocm:332`] | — |
+| Ray in the same closure | pattern only — `symlinkJoin` [S `flake.nix:685–691`] | own env (a real `python.withPackages` is more robust than the symlinkJoin) |
+| Thunderbolt/USB4 RDMA rail | **`nixosModules.thunderbolt-ibverbs`** [S `flake.nix:531`], `pkgs.rdma-core-usb4` [S `flake.nix:320`] | — |
+| Ray head unit | nothing | **own unit** |
+| Ray worker unit | nothing | **own unit** (with a real readiness gate, not `sleep 2`) |
+| `vllm serve` TP=2 unit | nothing | **own unit** |
+| NCCL/RCCL env | **values readable** from `default.nix:223–239` and the 55-name `TUNE_VARS` at `vllm-transport-matrix.sh:188–243` [S] | own `serviceConfig.Environment` |
+| GTT / TuneD | **`nixosModules.tuning` — FORBIDDEN (§5)** | own, in dotfiles |
+
+Good news: the units are straightforward, and the *hard-won empirical content* —
+which NCCL knobs matter on this fabric — is plain data in files we may read and
+whose **values** we may use. Reading a number and setting it in our own unit is
+not copying their code.
+
+---
+
+## 7. FLAKE.LOCK AGES AND BUILDABILITY
+
+### 7.1 Age of each input
+
+**[M]** Computed from `flake.lock` `lastModified` against today (2026-08-28):
+
+| Input | Locked | Age |
+|---|---|---|
+| `nixpkgs` | **2026-07-18** | **41 days** |
+| `vllm-src` | **2026-07-12** | **47 days** |
+| `llama-cpp-master` | 2026-07-18 | 41 days |
+| `therock-src-…-root` (TheRock) | 2026-07-18 | 41 days |
+| `nix-ai-tools` | 2026-07-19 | 40 days |
+| `thunderbolt-ibverbs` | 2026-06-30 | 59 days |
+| `mlx-src` | 2026-07-16 | 43 days |
+| `fastflowlm` | 2026-07-17 | 42 days |
+| `ec-su-axb35` | 2026-07-11 | 48 days |
+| `llama-cpp-spacemit` | 2026-07-04 | 55 days |
+| `ds4` | 2026-06-17 | 72 days |
+| `ds4-hip` | 2026-06-04 | 85 days |
+| `xrt-src` / `xdna-driver-src` / `spine-triton` | 2026-06-04 | 85 days |
+| `therock-src-…rocm-libraries` | 2026-07-14 | 45 days |
+| `therock-src-…rocm-systems` | 2026-07-16 | 43 days |
+| `therock-src-…amd-llvm` | 2026-07-15 | 44 days |
+| ROCm vendored third-party (~20 nodes) | 2022-03-31 … 2026-06 | up to **1611 days** — ROCm's own pins, not local staleness |
+
+Transitive (via `nix-ai-tools`/`thunderbolt-ibverbs`): `flake-parts` 2026-07-01,
+`treefmt-nix` 2026-07-18, `bun2nix` 2026-06-29, `systems` 2023-04-09.
+
+Also note **[S]**: `lib/hydra/benchmark/` contains a **second, separate flake
+with its own `flake.lock`** (`lib/hydra/benchmark/flake.nix`, `flake.lock`), also
+covered by dependabot (`.github/dependabot.yml:6`). Not on the campaign's
+critical path, but it means "the lock" is ambiguous — there are two.
+
+### 7.2 The finding the age table hides
+
+**[M] The lock is 4 weeks behind the code in the same repo:**
+
+```
+$ git log -1 --format='%ci %s' -- flake.lock
+2026-07-21 17:51:58 +0200 rocm: update Strix Halo inference stack to 7.15 (#148)
+
+$ git log -1 --format='%H %ci %s'
+f0f2048… 2026-08-18 10:03:06 +0200 npu-exporter: add AMD XDNA NPU Prometheus exporter (#162)
+```
+
+**`flake.lock` has not been touched since 2026-07-21 — 38 days ago — while HEAD
+advanced to 2026-08-18.** Everything merged in those four weeks
+(`npu-exporter` #162, `amdtop` #161, `smu-exporter` #156, `mlir-aie` #158,
+`gfx1030` #151 — **[M]** from `git log --oneline -5`) landed **without a lock
+bump**, i.e. was only ever evaluated against the July-18 nixpkgs.
+
+This matters more than the raw 41 days: **[S]** `.github/dependabot.yml:7–8`
+schedules `interval: "daily"` nix input updates. Daily automation that has
+produced **zero lock commits in 38 days** means either the automation is failing
+or its PRs are not being merged. Either way, **the lock is not being
+continuously validated**, and the newest ~28 days of code has never been
+green against anything but a stale pin.
+
+**[M] Churn of the files the campaign depends on** — these are *not* moving:
+
+| File | Last touched |
+|---|---|
+| `overlays/therock-vllm.nix` | 2026-07-21 (`12e2ed2`, #148) |
+| `pkgs/strix-halo-vllm-pair-bench/default.nix` | 2026-06-12 (`8db2c08`, #79) |
+| `lib/bench/vllm-stream-client.py` | 2026-06-12 (`8db2c08`, #79) |
+| `modules/tuning.nix` | 2026-06-03 (`109038d`, a *nixpkgs bump* commit) |
+
+**Interpretation:** the vLLM/bench surface is **stable and unmaintained**, not
+stable-because-mature. `tuning.nix` last changed only as collateral in a
+dependency bump. The campaign should expect **no upstream fix** for §4.4 and
+should not plan around one.
+
+### 7.3 Does it build against current nixpkgs?
+
+**UNDETERMINED — and deliberately so.** I ran **no builds and no evaluations**
+per the analysis-only constraint. What I can and cannot say:
+
+**Can say [S/M]:**
+- The flake is *self-consistent*: it pins its own `nixpkgs` at `61b7c44c4073`
+  (2026-07-18) and, used **without** a `follows`, evaluates against that pin.
+  For a downstream consumer this is the safe mode.
+- The `vllm-rocm` build chain is **maximally sensitive to the nixpkgs pin**,
+  because it does not define vLLM — it *mutates nixpkgs'* (`therock-vllm.nix:242`,
+  `py.vllm.override`). Concretely it assumes nixpkgs provides:
+  - a `python313Packages.vllm` accepting `.override { rocmSupport, cudaSupport,
+    gpuTargets, rocmPackages, amdsmi }` [S `:242–247`];
+  - a patch file literally named `0006-drop-rocm-extra-reqs.patch` in that
+    package's `patches` [S `:253–255`] — if nixpkgs renames or drops it, the
+    filter silently becomes a no-op and the ROCm-extra-reqs patch is re-applied
+    to a 0.25.1 tree it was not written for;
+  - `py.setuptools_80`, `py.outlines-core`, `py.amdsmi`, `py.watchfiles`, … [S `:214–231`];
+  - a `pyproject.toml` containing the exact literal `"torch == 2.11.0"` [S `:269`,
+    `--replace-fail`].
+- Every `--replace-fail` in `postPatch` (`:259, 263, 268, 271, 279, 288`) is a
+  **hard abort** on a missed match. This is good engineering (fails loudly) and
+  simultaneously the reason `inputs.nix-strix-halo.inputs.nixpkgs.follows =
+  "nixpkgs"` is **high-risk**: a newer nixpkgs whose vllm has moved past 0.16.0
+  will very likely break one of them.
+- **[S-local, indicative]** the local system nixpkgs (26.11) ships
+  `vllm` **0.16.0** with the four patches listed in §3.3, `0006` present. If the
+  pinned 2026-07-18 nixpkgs is close to that, the mechanism holds today.
+
+**Cannot say:** whether a *current* (late-August 2026) nixpkgs still satisfies
+all of the above. **What would settle it:** a `nix flake check --no-build` /
+`nix eval .#packages.x86_64-linux.vllm-rocm.drvPath` with
+`--override-input nixpkgs github:NixOS/nixpkgs/nixos-unstable`. Evaluation alone
+(no realisation) would surface the `.override` signature and attribute-existence
+failures; the `--replace-fail` breakages only appear at build time.
+
+**Recommendation:** **do not `follows` nixpkgs into this input.** Let it keep its
+own 2026-07-18 nixpkgs. Accept the resulting closure duplication — it buys a
+package that actually evaluates, and it is the configuration upstream last
+tested.
+
+---
+
+## 8. SUMMARY FOR THE CONSUMPTION PLAN
+
+1. **License: no LICENSE file exists** [M, two searches + full file inventory +
+   README grep]. Flake-input use only. Never copy `.nix`, `.patch`, `.sh`, or
+   `.py` into the flashnext tree. Importing a path *inside the fetched input*
+   (`"${input}/overlays/therock-vllm.nix"`) is input use and is fine.
+2. **Fork the vLLM src via `inputs.nix-strix-halo.inputs.vllm-src.follows`**
+   [S `flake.nix:47–50`, `:368`]. It reaches `vllm-rocm` and the bench env in one
+   move. **It does not change the version string** — `vllmVersion = "0.25.1"` is a
+   literal at `flake.nix:369` feeding `VLLM_VERSION_OVERRIDE`
+   [S `therock-vllm.nix:296`].
+3. **No patch list is exposed.** `mkVllmTherock` takes 16 booleans and nothing
+   else [S `therock-vllm.nix:138–156`]; `lib` exports four overlay builders and
+   no vLLM one [S `flake.nix:480–499`; `grep` → 1 internal hit].
+   **Inject `.patch` files via `overridePythonAttrs` with `(old.patches or []) ++ …`**,
+   and **append** to `postPatch` — never assign, because `therock-vllm.nix:257`
+   assigns and `:288–291` is load-bearing.
+4. **ROCm is `7.15.0a20260719`, an AMD nightly** [S `rocm.json:4–6`]. torch 2.11.0
+   / triton 3.7.1 / cp313 arrive as **prebuilt AMD wheels** [S
+   `therock-python.nix:53–61`, `python-wheels.json`, `python-config.nix:4`];
+   **only vLLM is compiled from source** [S `therock-vllm.nix:321`]. ROCm 10 is a
+   five-file coordinated fork, not a config change — and
+   `therock-vllm.nix:269`'s `--replace-fail '"torch == 2.11.0"'` guarantees a break.
+5. **`vllm-stream-client.py:297` — CONFIRMED at current bytes, line number
+   unchanged.** md5 `aadc50c1c653b8cc58571313ba1fe070`, 374 lines / 11903 bytes [M].
+   Line 297 is character-identical to line 294; both are `statistics.mean(ttfts)`.
+   The docstring at `:4–7` admits the proxy. The file has been modified exactly
+   once, at introduction (2026-06-12) [M] — **expect no upstream fix.** Replace
+   the client through the existing `vllmStreamClient` package argument
+   [S `pkgs/strix-halo-vllm-pair-bench/default.nix:14`].
+6. **Forbidden module = `nixosModules.tuning` = `modules/tuning.nix`, 33 lines.**
+   It appends `ttm.pages_limit=20971520` (80 GiB) to `boot.kernelParams` with
+   **no option and no `mkDefault`** [S `:4–7`] — the only GTT setter in the repo
+   [M, repo-wide grep] — plus forces TuneD `accelerator-performance` at every
+   boot [S `:13–32`] and injects MES firmware [S `:11`]. Duplicate kernel
+   parameters **merge silently**; the collision will not error. Compounding the
+   trap: `README.md:196` lists it without caveat and
+   `examples/configuration.nix:21` imports it. **Enforce the prohibition with an
+   assertion, not a convention.** Use `nixosModules.default` [S `flake.nix:514–521`],
+   which is tuning-inert.
+7. **No vLLM serving module exists** — `grep -rn 'vllm' modules/` returns
+   **nothing** [M]. The coordinator/worker Ray pair lives only in
+   `lib/bench/vllm-transport-matrix.sh:586–599` as SSH-driven shell, with a
+   `sleep 2` for synchronisation [S `:590`]. **flashnext must write its own
+   systemd units**; it may freely reuse the empirically-tuned NCCL/RCCL *values*
+   [S `default.nix:223–239`; `vllm-transport-matrix.sh:188–243`].
+8. **Lock staleness: 41 days on nixpkgs/TheRock, 47 on vllm-src — but the
+   sharper fact is that `flake.lock` has not moved since 2026-07-21 while HEAD
+   advanced to 2026-08-18** [M], despite `dependabot.yml:7–8` scheduling daily
+   updates. ~28 days of merged code has never been evaluated against a fresh
+   pin. **Do not `follows` nixpkgs into this input**: `vllm-rocm` is built by
+   mutating *nixpkgs'* vllm [S `therock-vllm.nix:242`] and depends on a patch
+   filename [S `:253–255`] and six `--replace-fail` literals [S `:259–292`].
+   Buildability against a *current* nixpkgs is **UNDETERMINED** — no builds were
+   run; `nix eval .#packages.x86_64-linux.vllm-rocm.drvPath
+   --override-input nixpkgs …` would settle the evaluation half.
