@@ -168,13 +168,15 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
 - Never touch RDMA (F.1). The PM QoS hold and tripwires are live; leave them.
 - llama-swap owns :9292; the pair service uses its own ports.
 
-## AMD ROCm.AI skills (shipped today — use them)
+## AMD ROCm.AI skills (already vendored into the fleet — just use them)
 
-Install into this repo for your own session:
-`npx skills add amd/skills --skill rocm-doctor --skill magpie-kernel-evaluator --agent claude-code`
-— `rocm-doctor` for bring-up failures, `magpie-kernel-evaluator` for the
-FP8-MoE Triton validation and the benchmark deliverable. Hyperloom is NOT for
-tonight (Instinct-scoped optimizer; nothing to optimize until first tokens).
+`rocm-doctor`, `magpie-kernel-evaluator`, and `tracelens-analysis-orchestrator`
+are vendored into nix-managed dotfiles (PR mecattaf/dotfiles#243) and load
+from `~/.claude/skills` — no `npx` install. `rocm-doctor` for bring-up
+failures, `magpie-kernel-evaluator` for the FP8-MoE Triton validation and the
+benchmark deliverable, `tracelens` for PyTorch trace analysis. Hyperloom is
+NOT for tonight (Instinct-scoped optimizer; nothing to optimize until first
+tokens).
 
 ## Rough timeline (8h window, generous buffers)
 

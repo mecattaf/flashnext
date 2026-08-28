@@ -287,15 +287,33 @@ build_matched_set() {
    attempting that build automatically here -- it belongs in the operator's
    own flake evaluation, not silently invoked by a fetch script; see REPORT.md."
 
-  log "KDIR: symlink farm over $kdev + westeri thunderbolt.h overlay + CONFIG_USB4_CONFIGFS=y"
-  rm -rf "$WORK"; mkdir -p "$OUT"
-  cp -as "$kdev" "$WORK/kdir"
-  rm -f "$WORK/kdir/include/linux/thunderbolt.h"
-  cp "$WESTERI_DIR/include/linux/thunderbolt.h" "$WORK/kdir/include/linux/thunderbolt.h"
+  kroot="$(dirname "$kdev")"   # nixpkgs .dev layout: sibling build/ + source/
+  [ -d "$kroot/source" ] || fail "expected the nixpkgs split build/source layout under $kroot"
+  log "KDIR: writable sibling farm of $kroot (build+source) + westeri thunderbolt.h overlay + CONFIG_USB4_CONFIGFS=y"
+  [ -d "$WORK" ] && chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"; mkdir -p "$WORK" "$OUT"
+  # Farm both trees: real dirs, file symlinks into the store, internal
+  # symlinks preserved verbatim -- the sibling structure is recreated, so the
+  # relative build/source link resolves inside the farm.
+  cp -rs "$kroot/source" "$WORK/source" 2>"$WORK/cp-farm-errors.log" || true
+  cp -rs "$kroot/build" "$WORK/kdir" 2>>"$WORK/cp-farm-errors.log" || true
+  chmod -R u+w "$WORK/source" "$WORK/kdir"
+  for need in Makefile include scripts Module.symvers; do
+    [ -e "$WORK/kdir/$need" ] || fail "kdir farm is missing $need -- see $WORK/cp-farm-errors.log"
+  done
+  rm -f "$WORK/kdir/source"; ln -s ../source "$WORK/kdir/source"
+  # The store build/Makefile hardcodes store-absolute KBUILD_OUTPUT/source
+  # paths; replace it with the same two-line redirect aimed at the farm.
+  rm -f "$WORK/kdir/Makefile"
+  printf 'export KBUILD_OUTPUT = %s\ninclude %s\n' "$WORK/kdir" "$WORK/source/Makefile" > "$WORK/kdir/Makefile"
+  # Patched header shadows the stock one where kbuild actually reads it:
+  # the SOURCE tree, not the build tree.
+  rm -f "$WORK/source/include/linux/thunderbolt.h"
+  cp "$WESTERI_DIR/include/linux/thunderbolt.h" "$WORK/source/include/linux/thunderbolt.h"
   local real_autoconf
   real_autoconf=$(readlink -f "$WORK/kdir/include/config/auto.conf")
   rm -f "$WORK/kdir/include/config/auto.conf"
   cp "$real_autoconf" "$WORK/kdir/include/config/auto.conf"
+  chmod u+w "$WORK/kdir/include/config/auto.conf"
   grep -q '^CONFIG_USB4_CONFIGFS=y' "$WORK/kdir/include/config/auto.conf" \
     || echo 'CONFIG_USB4_CONFIGFS=y' >> "$WORK/kdir/include/config/auto.conf"
 
