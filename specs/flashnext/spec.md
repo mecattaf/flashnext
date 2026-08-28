@@ -130,7 +130,7 @@ Why: a number without its protocol is an anecdote; the harness and its client ar
 6.1 the pair-service tooling lands under `host/` → unit files carry a stop-post teardown and no boot-time install, asserted by the tests suite. [gate: repo-tests]
 6.2 the bench client separates queue wait from prefill → a client unit test with injected queueing passes in the tests suite. [gate: repo-tests]
 6.3 the bench matrix runs per ruling P12 → a bench receipt records three (given) loads per arm, counterbalanced, with token fingerprints, and rows committed under `results/`. [gate: receipts-verify]
-6.4 the RDMA package lands per ruling P7 → its scripts pass the syntax sweep and its module fetch stays pinned, asserted by the tests suite. [gate: repo-tests]
+6.4 the RDMA package lands per ruling P7 → the tests suite's package assertions pass: syntax-clean scripts, pinned module fetch, no unattended install path. [gate: repo-tests]
 
 ### R7 — the morning and the blocker protocol
 Why: promotion is a human act and the campaign's failure mode is typed, never silent.
