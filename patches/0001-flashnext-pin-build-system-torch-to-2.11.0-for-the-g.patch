@@ -1,0 +1,51 @@
+From 16ade5f0b9de60cb26352a72febe9e963c4a593c Mon Sep 17 00:00:00 2001
+From: flashnext <flashnext@leger.run>
+Date: Fri, 28 Aug 2026 23:05:08 +0200
+Subject: [PATCH 01/12] flashnext: pin build-system torch to 2.11.0 for the
+ gfx1151 substrate
+
+The gfx1151 (Strix Halo) build substrate ships exactly one torch: the AMD
+TheRock wheel torch 2.11.0+rocm7.15.0a20260719 for cp313. pyproject.toml
+carried the CUDA build number (2.13.0) while requirements/build/rocm.txt
+already pins torch==2.11.0, so the ROCm build path was already designed
+around 2.11 -- only [build-system].requires disagreed.
+
+Audited before changing: no PR-added code needs a torch >=2.12 API.
+  - vllm/models/qwen4_exp/**, vllm/v1/spec_decode/qwen4_exp.py and
+    vllm/transformers_utils/configs/qwen4_exp.py use only long-stable
+    torch symbols (torch.float8_e4m3fn, torch.frombuffer, torch.cummax,
+    torch.searchsorted, ...) plus vllm's own direct_register_custom_op.
+  - the PR-added csrc (csrc/libtorch_stable/{gdn/fused_gdn_decode_kernel.cu,
+    ops.h,torch_bindings.cpp}) only widens an existing signature by a
+    std::string; every torch::stable:: / torch::headeronly:: symbol used
+    anywhere in csrc/ resolves in torch 2.11.0's shipped headers.
+  - vllm/env_override.py:525,563,728 still carries the explicit
+    'torch >= 2.11 and < 2.12' backports, i.e. upstream at this commit
+    still supports 2.11.
+
+This literal is also what nix-strix-halo overlays/therock-vllm.nix:269
+matches with --replace-fail '"torch == 2.11.0"'; a miss is a hard build
+abort. Note requirements/build/cuda.txt:8 intentionally stays at 2.13.0.
+---
+ pyproject.toml | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 0766645..34af18a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -7,7 +7,10 @@ requires = [
+     "setuptools>=77.0.3,<81.0.0",
+     "setuptools-scm>=8.0",
+     "setuptools-rust>=1.9.0",
+-    "torch == 2.13.0",
++    # flashnext: pinned to the ROCm build torch (requirements/build/rocm.txt),
++    # not the CUDA 2.13.0 line, because the gfx1151 substrate only ships
++    # torch 2.11.0. vllm/env_override.py still carries the <2.12 backports.
++    "torch == 2.11.0",
+     "wheel",
+     "jinja2",
+ ]
+-- 
+2.55.0
+

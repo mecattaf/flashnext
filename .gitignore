@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .direnv/
 result
+.engine-overlay/
+result-engine
+results/logs/

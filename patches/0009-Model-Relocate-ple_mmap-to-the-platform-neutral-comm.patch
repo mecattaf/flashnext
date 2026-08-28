@@ -1,0 +1,98 @@
+From f3ed99f71554f160bdb66479c007ee2ec3ccdfc6 Mon Sep 17 00:00:00 2001
+From: work-ple <work-ple@flashnext.local>
+Date: Fri, 28 Aug 2026 23:02:29 +0200
+Subject: [PATCH 09/12] [Model] Relocate ple_mmap to the platform-neutral
+ common/ tree
+
+VLLM_PLE_MMAP lives under vllm/models/qwen4_exp/nvidia/, so a ROCm build --
+which imports the amd/ tree instead -- never imports the module, never
+registers vllm::qwen4_exp_ple_mmap_forward, and silently treats
+VLLM_PLE_MMAP=1 as a no-op.
+
+ple_mmap.py itself is platform-neutral: it makes no torch.cuda.* call, uses
+no pinned memory, and its only platform touchpoint is
+current_platform.dispatch_key, which RocmPlatform reports as "CUDA" exactly
+like CudaPlatform. Move it next to common/ple.py so both trees can import it.
+
+Pure relocation. No behavior change on the nvidia side:
+  - git mv vllm/models/qwen4_exp/nvidia/ple_mmap.py
+           vllm/models/qwen4_exp/common/ple_mmap.py
+  - nvidia/ple_layer.py, nvidia/model.py: 'from . import ple_mmap'
+    -> 'from ..common import ple_mmap' (import blocks re-sorted)
+  - tests/models/qwen4_exp/test_ple_mmap.py: the ple_mmap module import
+    now points at common/ (nvidia.model stays nvidia.model)
+  - vllm/envs.py: the VLLM_PLE_MMAP comment's file pointer follows the move
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01D273pHHi5ExDmStQUAicb7
+---
+ tests/models/qwen4_exp/test_ple_mmap.py              | 2 +-
+ vllm/envs.py                                         | 2 +-
+ vllm/models/qwen4_exp/{nvidia => common}/ple_mmap.py | 0
+ vllm/models/qwen4_exp/nvidia/model.py                | 2 +-
+ vllm/models/qwen4_exp/nvidia/ple_layer.py            | 2 +-
+ 5 files changed, 4 insertions(+), 4 deletions(-)
+ rename vllm/models/qwen4_exp/{nvidia => common}/ple_mmap.py (100%)
+
+diff --git a/tests/models/qwen4_exp/test_ple_mmap.py b/tests/models/qwen4_exp/test_ple_mmap.py
+index d442032..d303033 100644
+--- a/tests/models/qwen4_exp/test_ple_mmap.py
++++ b/tests/models/qwen4_exp/test_ple_mmap.py
+@@ -23,8 +23,8 @@ import vllm.forward_context as forward_context
+ import vllm.model_executor.layers.linear as linear_module
+ import vllm.model_executor.layers.vocab_parallel_embedding as embedding_module
+ import vllm.model_executor.parameter as parameter_module
++import vllm.models.qwen4_exp.common.ple_mmap as ple_mmap
+ import vllm.models.qwen4_exp.nvidia.model as model_module
+-import vllm.models.qwen4_exp.nvidia.ple_mmap as ple_mmap
+ from vllm.config import CompilationConfig, set_current_vllm_config
+ from vllm.config.compilation import CompilationMode, CUDAGraphMode
+ from vllm.model_executor.layers.quantization.fp8 import Fp8Config
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 2dd714f..bf219ed 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -2173,7 +2173,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     # RDMA device name). Must be set together with VLLM_GPU_NIC_PCIE_MAPPING.
+     "VLLM_NIC_SELECTION_VARS": lambda: os.getenv("VLLM_NIC_SELECTION_VARS", ""),
+     # Serve the Qwen4Exp PLE n-gram table from NVMe via mmap instead of
+-    # keeping it GPU/host-resident. See vllm/models/qwen4_exp/nvidia/ple_mmap.py.
++    # keeping it GPU/host-resident. See vllm/models/qwen4_exp/common/ple_mmap.py.
+     "VLLM_PLE_MMAP": lambda: bool(int(os.getenv("VLLM_PLE_MMAP", "0"))),
+     # Gather thread-pool size for the PLE mmap path.
+     "VLLM_PLE_MMAP_WORKERS": lambda: int(os.getenv("VLLM_PLE_MMAP_WORKERS", "32")),
+diff --git a/vllm/models/qwen4_exp/nvidia/ple_mmap.py b/vllm/models/qwen4_exp/common/ple_mmap.py
+similarity index 100%
+rename from vllm/models/qwen4_exp/nvidia/ple_mmap.py
+rename to vllm/models/qwen4_exp/common/ple_mmap.py
+diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
+index 5e7a1cf..3669237 100644
+--- a/vllm/models/qwen4_exp/nvidia/model.py
++++ b/vllm/models/qwen4_exp/nvidia/model.py
+@@ -73,8 +73,8 @@ from vllm.transformers_utils.configs.qwen4_exp import (
+ from vllm.v1.attention.backends.registry import MambaAttentionBackendEnum
+ from vllm.v1.kv_cache_interface import MambaSpec
+ 
++from ..common import ple_mmap
+ from ..config import Qwen4ExpConfig
+-from . import ple_mmap
+ from .hyperconnection import GatedResidual, HyperConnectionConfig
+ from .low_latency_gemm import enable_qwen4_exp_low_latency_gemm
+ from .ple_layer import Qwen4ExpPLELayer
+diff --git a/vllm/models/qwen4_exp/nvidia/ple_layer.py b/vllm/models/qwen4_exp/nvidia/ple_layer.py
+index 2663a60..1e8bdb4 100644
+--- a/vllm/models/qwen4_exp/nvidia/ple_layer.py
++++ b/vllm/models/qwen4_exp/nvidia/ple_layer.py
+@@ -48,8 +48,8 @@ from vllm.v1.attention.backends.short_conv_attn import (
+ )
+ from vllm.v1.attention.backends.utils import NULL_BLOCK_ID
+ 
++from ..common import ple_mmap
+ from ..common.ple import copy_ple_embedding_shard_
+-from . import ple_mmap
+ 
+ _MASK64 = (1 << 64) - 1
+ _SPLITMIX_GAMMA = 0x9E3779B97F4A7C15
+-- 
+2.55.0
+

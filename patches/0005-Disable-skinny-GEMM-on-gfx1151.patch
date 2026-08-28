@@ -1,0 +1,154 @@
+From 035f858c2c8eda8a454451cb4fdfb1238de209e3 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:06:28 +0200
+Subject: [PATCH 05/12] Disable skinny GEMM on gfx1151
+
+wvSplitK / LLMM1 are pathologically slow on gfx1151 (Strix Halo,
+RDNA3.5), so rocm_unquantized_gemm_impl now excludes that arch from the
+skinny path and falls back to torch.nn.functional.linear. The existing
+VLLM_ROCM_USE_SKINNY_GEMM env var remains the kill-switch for the whole
+skinny path; setting it does not re-enable gfx1151.
+
+Also restores the truncated gfx1250 comment the condition had lost.
+
+Manual resolution notes (diff was cut against an older base):
+- vllm/model_executor/layers/utils.py applied with offsets +144/+149.
+- tests/model_executor/layers/test_rocm_unquantized_gemm.py: upstream
+  pins on_gfx1151 -> False in the three tests its base had. This tree has
+  three more tests that pin the same gfx predicate set
+  (makes_skinny_activation_contiguous,
+  makes_llmm1_activation_contiguous,
+  rejects_unsupported_skinny_layouts); all six are pinned here, since an
+  unpinned predicate would make them fail when the suite is actually run
+  on gfx1151 hardware. noncontiguous_activation_real_kernel pins no gfx
+  predicates and is left alone.
+
+Cherry-picked-from: vllm-project/vllm#51511
+---
+ .../layers/test_rocm_unquantized_gemm.py      | 36 +++++++++++++++++++
+ vllm/model_executor/layers/utils.py           | 13 +++++--
+ 2 files changed, 47 insertions(+), 2 deletions(-)
+
+diff --git a/tests/model_executor/layers/test_rocm_unquantized_gemm.py b/tests/model_executor/layers/test_rocm_unquantized_gemm.py
+index 66b4af7..d11f923 100644
+--- a/tests/model_executor/layers/test_rocm_unquantized_gemm.py
++++ b/tests/model_executor/layers/test_rocm_unquantized_gemm.py
+@@ -25,6 +25,7 @@ def test_rocm_unquantized_gemm_gfx1x_wvsplitk_path(monkeypatch):
+     monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: False)
+     monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
+@@ -42,6 +43,36 @@ def test_rocm_unquantized_gemm_gfx1x_wvsplitk_path(monkeypatch):
+     assert torch.allclose(out, ref, atol=1e-3, rtol=1e-3)
+ 
+ 
++@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
++def test_rocm_unquantized_gemm_gfx1151_falls_back(monkeypatch, dtype):
++    x = torch.randn(2, 64, dtype=dtype)
++    weight = torch.randn(128, 64, dtype=dtype)
++    ref = torch.nn.functional.linear(x, weight, None)
++
++    monkeypatch.setattr(utils, "use_aiter_triton_gemm", lambda *args: False)
++    monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: True)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: True)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: False)
++    monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
++
++    wvsplitk_mock = MagicMock(side_effect=lambda w, x_view, _, __: x_view @ w.t())
++    monkeypatch.setattr(utils.ops, "wvSplitK", wvsplitk_mock)
++    llmm1_mock = MagicMock(side_effect=lambda w, x_view, _: x_view @ w.t())
++    monkeypatch.setattr(utils.ops, "LLMM1", llmm1_mock)
++    linear_mock = MagicMock(side_effect=torch.nn.functional.linear)
++    monkeypatch.setattr(torch.nn.functional, "linear", linear_mock)
++
++    out = utils.rocm_unquantized_gemm_impl(x, weight, None)
++
++    wvsplitk_mock.assert_not_called()
++    llmm1_mock.assert_not_called()
++    linear_mock.assert_called_once()
++    assert torch.allclose(out, ref, atol=1e-3, rtol=1e-3)
++
++
+ def test_rocm_unquantized_gemm_makes_skinny_activation_contiguous(monkeypatch):
+     x = torch.randn(64, 4, dtype=torch.float16).t()
+     weight = torch.randn(128, 64, dtype=torch.float16)
+@@ -52,6 +83,7 @@ def test_rocm_unquantized_gemm_makes_skinny_activation_contiguous(monkeypatch):
+     monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: False)
+     monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
+@@ -78,6 +110,7 @@ def test_rocm_unquantized_gemm_makes_llmm1_activation_contiguous(monkeypatch):
+     monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: False)
+     monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
+@@ -113,6 +146,7 @@ def test_rocm_unquantized_gemm_rejects_unsupported_skinny_layouts(
+     monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: False)
+     monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
+@@ -159,6 +193,7 @@ def test_rocm_unquantized_gemm_gfx1x_n_gt_5_falls_back(monkeypatch):
+     monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: False)
+     monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
+@@ -185,6 +220,7 @@ def test_rocm_unquantized_gemm_gfx950_wvsplitkrc_path(monkeypatch):
+     monkeypatch.setattr(utils.envs, "VLLM_ROCM_USE_SKINNY_GEMM", True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx9", lambda: False)
++    monkeypatch.setattr("vllm.platforms.rocm.on_gfx1151", lambda: False)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx950", lambda: True)
+     monkeypatch.setattr("vllm.platforms.rocm.on_gfx1250", lambda: True)
+     monkeypatch.setattr(utils, "num_compute_units", lambda: 120)
+diff --git a/vllm/model_executor/layers/utils.py b/vllm/model_executor/layers/utils.py
+index dc6f677..cbd4d9f 100644
+--- a/vllm/model_executor/layers/utils.py
++++ b/vllm/model_executor/layers/utils.py
+@@ -260,7 +260,13 @@ def use_aiter_triton_gemm(n, m, k, dtype):
+ def rocm_unquantized_gemm_impl(
+     x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor | None = None
+ ) -> torch.Tensor:
+-    from vllm.platforms.rocm import on_gfx1x, on_gfx9, on_gfx950, on_gfx1250
++    from vllm.platforms.rocm import (
++        on_gfx1x,
++        on_gfx9,
++        on_gfx950,
++        on_gfx1151,
++        on_gfx1250,
++    )
+ 
+     n = x.numel() // x.size(-1)
+     m = weight.shape[0]
+@@ -319,7 +325,10 @@ def rocm_unquantized_gemm_impl(
+     use_skinny = (
+         envs.VLLM_ROCM_USE_SKINNY_GEMM
+         and (on_gfx9() or on_gfx1x())
+-        # build (gfx9/gfx11 ISA); fall back to torch GEMM there.
++        # gfx1151's wvSplitK route is pathologically slow; use torch GEMM.
++        and not on_gfx1151()
++        # gfx1250 lacks a compatible skinny GEMM build (gfx9/gfx11 ISA);
++        # fall back to torch GEMM there.
+         # TODO GFX1250: Include once skinny GEMM is supported on gfx1250
+         and x.dtype in [torch.float16, torch.bfloat16]
+         and k % 8 == 0
+-- 
+2.55.0
+

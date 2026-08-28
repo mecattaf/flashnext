@@ -1,0 +1,76 @@
+From 4b94b6188d800cd0e8ec0c9ac2da96c48ba4d3c3 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:19:34 +0200
+Subject: [PATCH 11/12] fork: route AMD APU memory into MemorySnapshot on the
+ v1 profiling path
+
+Completes what the #40963 cherry-pick could not do on this tree. Memory
+profiling migrated to torch.accelerator.get_memory_info (#44825), so the
+RocmPlatform.mem_get_info override that reads sysfs GTT totals is dead
+code on the KV-sizing path -- while the is_integrated_gpu() flip IS live
+and activated the NVIDIA-Tegra branch of MemorySnapshot.measure with
+ROCm inputs: free_memory = psutil available (host RAM) against
+total_memory = HIP VRAM aperture, making cuda_memory = total - free
+negative (poisoning non_torch_memory) and sizing request_memory off the
+aperture instead of the 128 GiB GTT.
+
+MemorySnapshot.measure now dispatches the integrated-GPU branch by
+platform: on ROCm it takes both free and total from
+current_platform.mem_get_info() (the GTT-backed override, 8 GiB
+reserve, loud warning + aperture fallback on sysfs failure); the psutil
+free-only override remains exactly as-is for the NVIDIA UMA devices it
+was written for.
+
+Kill-switch unchanged: VLLM_ROCM_APU_UNIFIED_MEMORY=0 makes
+is_integrated_gpu() False, skipping this branch entirely and restoring
+stock discrete accounting.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01D273pHHi5ExDmStQUAicb7
+---
+ vllm/utils/mem_utils.py | 29 ++++++++++++++++++++++-------
+ 1 file changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/vllm/utils/mem_utils.py b/vllm/utils/mem_utils.py
+index 6a522a1..599b9d8 100644
+--- a/vllm/utils/mem_utils.py
++++ b/vllm/utils/mem_utils.py
+@@ -146,13 +146,28 @@ class MemorySnapshot:
+ 
+         self.free_memory, self.total_memory = torch.accelerator.get_memory_info(device)
+         if current_platform.is_integrated_gpu(device.index):
+-            # On UMA (Unified Memory Architecture) platforms where CPU and
+-            # GPU share physical memory (e.g. GH200, DGX Spark, Jetson Orin),
+-            # cudaMemGetInfo underreports free memory because it does not
+-            # account for reclaimable OS memory (page cache, buffers).
+-            # Use psutil to get the true available memory.
+-            # https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/#estimating-total-allocatable-device-memory-on-an-integrated-gpu-device
+-            self.free_memory = psutil.virtual_memory().available
++            if current_platform.is_rocm():
++                # AMD APU (e.g. gfx1151): torch.accelerator.get_memory_info
++                # reports only the small local VRAM aperture as total, so the
++                # NVIDIA-Tegra branch below would pair a psutil free (host
++                # RAM, tens of GiB) with the aperture total and drive
++                # cuda_memory = total - free NEGATIVE, poisoning
++                # non_torch_memory and the KV budget. RocmPlatform overrides
++                # mem_get_info() to read consistent (free, total) from the
++                # amdgpu sysfs GTT counters (with an 8 GiB reserve); on a GTT
++                # read failure it warns loudly and returns the HIP aperture
++                # pair, which is the stock discrete accounting.
++                self.free_memory, self.total_memory = current_platform.mem_get_info(
++                    device.index
++                )
++            else:
++                # On UMA (Unified Memory Architecture) platforms where CPU and
++                # GPU share physical memory (e.g. GH200, DGX Spark, Jetson
++                # Orin), cudaMemGetInfo underreports free memory because it
++                # does not account for reclaimable OS memory (page cache,
++                # buffers). Use psutil to get the true available memory.
++                # https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/#estimating-total-allocatable-device-memory-on-an-integrated-gpu-device
++                self.free_memory = psutil.virtual_memory().available
+ 
+         self.cuda_memory = self.total_memory - self.free_memory
+ 
+-- 
+2.55.0
+

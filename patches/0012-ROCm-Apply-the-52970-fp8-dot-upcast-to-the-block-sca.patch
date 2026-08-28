@@ -1,0 +1,223 @@
+From bdb6f0420e797de9266de593326368091085cc3b Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:21:07 +0200
+Subject: [PATCH 12/12] [ROCm] Apply the #52970 fp8 dot upcast to the
+ block-scaled linear kernel
+
+The MoE admission commit gives gfx1151 a working block-FP8 fused MoE,
+but the dense projections were still broken:
+TritonFp8BlockScaledMMKernel.is_supported admits every CUDA-alike
+device, so the block-FP8 linear layers of this checkpoint dispatch to
+_w8a8_triton_block_scaled_mm, which hands fp8 A/B tiles straight to
+tl.dot -- unlowerable on RDNA3.5 (no FP8 WMMA) with Triton < 3.8.0.
+The MoE would run and every dense projection would not.
+
+Port the identical mechanism (vllm-project/vllm#52970) into the linear
+kernel: a FORCE_FP8_DOT_UPCAST tl.constexpr (default False) that
+converts the loaded tiles to bf16 before tl.dot, gated by
+_w8a8_fp8_dot_upcast_on_gfx1151() -- ROCm + on_gfx1151() +
+Triton < 3.8.0, mirroring the fused-MoE gate. The block-scale
+multiplies stay in fp32, so numerics are the same block-scaled GEMM.
+Logs once when engaged.
+
+Kill switch: FN_FP8_LINEAR=0 (default on), the linear twin of
+FN_FP8_MOE. Setting it restores the stock kernel byte-for-byte for
+bisection.
+
+Adds tests/kernels/quantization/test_gfx1151_fp8_linear_upcast.py: the
+version gate, the kill switch, the gfx1151-only scope and the kernel
+signature pin, all GPU-free.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01D273pHHi5ExDmStQUAicb7
+---
+ .../test_gfx1151_fp8_linear_upcast.py         | 84 +++++++++++++++++++
+ .../layers/quantization/utils/fp8_utils.py    | 46 ++++++++++
+ 2 files changed, 130 insertions(+)
+ create mode 100644 tests/kernels/quantization/test_gfx1151_fp8_linear_upcast.py
+
+diff --git a/tests/kernels/quantization/test_gfx1151_fp8_linear_upcast.py b/tests/kernels/quantization/test_gfx1151_fp8_linear_upcast.py
+new file mode 100644
+index 0000000..ee5326b
+--- /dev/null
++++ b/tests/kernels/quantization/test_gfx1151_fp8_linear_upcast.py
+@@ -0,0 +1,84 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""gfx1151 block-FP8 linear upcast gate.
++
++``TritonFp8BlockScaledMMKernel.is_supported`` admits every CUDA-alike device,
++so on gfx1151 (no FP8 matrix unit) the dense block-FP8 projections reach
++``_w8a8_triton_block_scaled_mm`` and would hand fp8 operands to ``tl.dot``.
++These tests pin the in-kernel bf16 upcast gate (the linear twin of the
++fused-MoE ``FN_FP8_MOE`` mechanism, following vllm-project/vllm#52970), its
++``FN_FP8_LINEAR=0`` kill switch and the Triton version bound, without a GPU.
++"""
++
++import inspect
++import sys
++import types
++
++import pytest
++
++from vllm.model_executor.layers.quantization.utils import fp8_utils
++from vllm.platforms import current_platform
++
++
++def _fake_gfx1151(monkeypatch: pytest.MonkeyPatch, *, on_gfx1151: bool) -> None:
++    """Present a ROCm device, optionally gfx1151, without importing the real
++    ``vllm.platforms.rocm`` (its module-level ``_GCN_ARCH`` probe falls back
++    to ``torch.cuda`` and cannot run on a CPU-only box)."""
++    monkeypatch.setattr(current_platform, "is_rocm", lambda: True)
++
++    rocm_stub = types.ModuleType("vllm.platforms.rocm")
++    rocm_stub.on_gfx1151 = lambda: on_gfx1151
++    monkeypatch.setitem(sys.modules, "vllm.platforms.rocm", rocm_stub)
++
++
++@pytest.mark.parametrize(
++    "triton_version,expect_upcast",
++    [("3.4.0", True), ("3.7.1", True), ("3.8.0", False), ("3.9.0", False)],
++)
++def test_linear_dot_upcast_follows_triton_version(
++    monkeypatch: pytest.MonkeyPatch, triton_version: str, expect_upcast: bool
++) -> None:
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(fp8_utils, "FN_FP8_LINEAR", True)
++    monkeypatch.setattr(fp8_utils.triton, "__version__", triton_version)
++
++    fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151.cache_clear()
++    try:
++        assert fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151() is expect_upcast
++    finally:
++        fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151.cache_clear()
++
++
++def test_linear_dot_upcast_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(fp8_utils, "FN_FP8_LINEAR", False)
++    monkeypatch.setattr(fp8_utils.triton, "__version__", "3.4.0")
++
++    fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151.cache_clear()
++    try:
++        assert fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151() is False
++    finally:
++        fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151.cache_clear()
++
++
++def test_linear_dot_upcast_gfx1151_only(monkeypatch: pytest.MonkeyPatch) -> None:
++    _fake_gfx1151(monkeypatch, on_gfx1151=False)
++    monkeypatch.setattr(fp8_utils, "FN_FP8_LINEAR", True)
++    monkeypatch.setattr(fp8_utils.triton, "__version__", "3.4.0")
++
++    fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151.cache_clear()
++    try:
++        assert fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151() is False
++    finally:
++        fp8_utils._w8a8_fp8_dot_upcast_on_gfx1151.cache_clear()
++
++
++def test_kernel_accepts_force_fp8_dot_upcast() -> None:
++    # w8a8_triton_block_scaled_mm() passes FORCE_FP8_DOT_UPCAST by keyword;
++    # keep the kernel signature and the launch site from drifting apart.
++    kernel = fp8_utils._w8a8_triton_block_scaled_mm
++    kernel_fn = getattr(kernel, "fn", kernel)
++    parameters = inspect.signature(kernel_fn).parameters
++
++    assert "FORCE_FP8_DOT_UPCAST" in parameters
++    assert parameters["FORCE_FP8_DOT_UPCAST"].default is False
+diff --git a/vllm/model_executor/layers/quantization/utils/fp8_utils.py b/vllm/model_executor/layers/quantization/utils/fp8_utils.py
+index 5df6bcb..085db4f 100644
+--- a/vllm/model_executor/layers/quantization/utils/fp8_utils.py
++++ b/vllm/model_executor/layers/quantization/utils/fp8_utils.py
+@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
+ from typing import Any
+ 
+ import torch
++from packaging.version import Version
+ 
+ import vllm.envs as envs
+ from vllm import _custom_ops as ops
+@@ -733,6 +734,30 @@ def per_token_group_quant_fp8_packed_for_deepgemm(
+     return x_q, x_s_packed
+ 
+ 
++# gfx1151 (Strix Halo, RDNA3.5) has no FP8 matrix unit: on Triton < 3.8.0 an
++# fp8 ``tl.dot`` cannot lower there, so the block-scaled linear kernel below
++# converts its A/B tiles to bf16 in-kernel first -- the mechanism of
++# vllm-project/vllm#52970, and the linear twin of the fused-MoE upcast in
++# ``fused_moe/utils.py`` (``FN_FP8_MOE``). Without it the fused MoE runs on
++# gfx1151 while every dense block-FP8 projection still hands fp8 operands to
++# ``tl.dot``. Latched once at import; ``FN_FP8_LINEAR=0`` restores the stock
++# kernel for bisection.
++FN_FP8_LINEAR = os.environ.get("FN_FP8_LINEAR", "1") != "0"
++
++
++@functools.cache
++def _w8a8_fp8_dot_upcast_on_gfx1151() -> bool:
++    """Whether the block-scaled linear kernel must upcast fp8 tiles."""
++    if not FN_FP8_LINEAR or not current_platform.is_rocm():
++        return False
++
++    from vllm.platforms.rocm import on_gfx1151
++
++    if not on_gfx1151():
++        return False
++    return Version(triton.__version__) < Version("3.8.0")
++
++
+ @triton.jit
+ def _w8a8_triton_block_scaled_mm(
+     # Pointers to inputs and output
+@@ -764,6 +789,9 @@ def _w8a8_triton_block_scaled_mm(
+     BLOCK_SIZE_N: tl.constexpr,
+     BLOCK_SIZE_K: tl.constexpr,
+     GROUP_SIZE_M: tl.constexpr,
++    # Convert the loaded A/B tiles to bf16 before tl.dot. Needed on devices
++    # with no FP8 matrix unit (gfx1151); see _w8a8_fp8_dot_upcast_on_gfx1151().
++    FORCE_FP8_DOT_UPCAST: tl.constexpr = False,
+ ):
+     """Triton-accelerated function used to perform linear operations (dot
+     product) on input tensors `A` and `B` with block-wise quantization, and
+@@ -794,6 +822,12 @@ def _w8a8_triton_block_scaled_mm(
+     for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+         a = tl.load(a_ptrs, mask=offs_k[None, :] < K - k * BLOCK_SIZE_K, other=0.0)
+         b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
++        if FORCE_FP8_DOT_UPCAST:
++            # No FP8 matrix unit on this device: convert the tiles so tl.dot
++            # lowers to the bf16 path. The block-scale multiplies below stay
++            # in fp32, so this is numerically the same block-scaled GEMM.
++            a = a.to(tl.bfloat16)
++            b = b.to(tl.bfloat16)
+ 
+         k_start = k * BLOCK_SIZE_K
+         offs_ks = k_start // group_k
+@@ -961,6 +995,17 @@ def w8a8_triton_block_scaled_mm(
+             triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),
+         )
+ 
++    # gfx1151 has no FP8 matrix unit, so tl.dot cannot consume the fp8 tiles
++    # directly on an older Triton. Upcast them in-kernel instead
++    # (vllm-project/vllm#52970).
++    force_fp8_dot_upcast = _w8a8_fp8_dot_upcast_on_gfx1151()
++    if force_fp8_dot_upcast:
++        logger.info_once(
++            "w8a8_triton_block_scaled_mm: upcasting FP8 tiles to bf16 before "
++            "tl.dot on gfx1151 (no FP8 matrix unit). Set FN_FP8_LINEAR=0 to "
++            "restore the stock kernel."
++        )
++
+     _w8a8_triton_block_scaled_mm[grid](
+         A,
+         B,
+@@ -982,6 +1027,7 @@ def w8a8_triton_block_scaled_mm(
+         As.stride(-1),
+         Bs.stride(1),
+         Bs.stride(0),
++        FORCE_FP8_DOT_UPCAST=force_fp8_dot_upcast,
+         **config,
+     )
+ 
+-- 
+2.55.0
+

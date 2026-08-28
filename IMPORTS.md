@@ -9,7 +9,7 @@ here is original work under this repo's Apache-2.0 LICENSE.*
 
 | Component | Pin | Source | Why |
 |---|---|---|---|
-| torch | `2.13.0+rocm7.14.0` (cp312/cp313 per image python) | `https://repo.amd.com/rocm/whl-multi-arch/` (AMD **stable** index) | The vLLM fork's `pyproject.toml` pins `torch == 2.13.0` exactly; AMD's stable multi-arch index carries this wheel for gfx1151 (verified 2026-08-28 — the index tops out at torch 2.13.0+rocm7.14.0). No nightly needed, no pin relaxation needed. |
+| torch | `2.13.0+rocm7.14.0` (cp312/cp313 per image python) — **container lane only** | `https://repo.amd.com/rocm/whl-multi-arch/` (AMD **stable** index) | AMD's stable multi-arch index carries this wheel for gfx1151 (verified 2026-08-28 — the index tops out at torch 2.13.0+rocm7.14.0). No nightly needed. Note the fork's `pyproject.toml` `[build-system]` pin is now `torch == 2.11.0` (Gate 0: the **nix** lane's TheRock substrate ships only 2.11.0, and the overlay's `--replace-fail` matches that literal; see `patches/0001-*`). This does not constrain the container lane: vLLM builds `--no-build-isolation` (and `[tool.uv] no-build-isolation-package = ["torch"]`), so `build-system.requires` is never resolved — the container's torch is whatever the image installs, i.e. this row. `requirements/build/cuda.txt` stays at 2.13.0. |
 | torchvision | `0.28.0+rocm7.14.0` | same index | torch 2.13-aligned. |
 | torchaudio | **omitted** | — | Only needed for vLLM audio extras; it is what capped kyuz0's auto-resolved set at torch 2.11.0. We drop the extra instead of downgrading torch. |
 | triton | wheel accompanying the torch set on the same index; fallback: the `pytorch-triton-rocm` wheel torch 2.13.0 declares | same index | Must be < 3.8.0 awareness: the fork's fp8-upcast gate keys on `triton < 3.8` (see PR #52970 pattern below). Record the resolved version in the build receipt. |
@@ -45,10 +45,14 @@ only #54129 has. (Apache-2.0 throughout.)
 
 ### 2.3 Our two original patches (the world-first pieces)
 
+*(As landed, the mirror in `patches/` carries these as `0008`/`0012` and
+`0009`/`0010` respectively — see `patches/MANIFEST.md` for the full 12-patch
+map.)*
+
 | Patch | Content | Upstream destination |
 |---|---|---|
-| `patches/0001-fp8-moe-gfx1151-admission.patch` | Oracle admission for block-FP8 fused-MoE on gfx1151 + fp8→bf16 in-kernel upcast in the fused-MoE Triton kernel (the #52970 pattern applied to MoE) + `FN_FP8_MOE` kill-switch + a loud log line naming the selected kernel class | PR to vllm-project/vllm, referencing #52970 |
-| `patches/0002-amd-ple-fp8-mmap-port.patch` | The `amd/` PLE port: mmap wiring (5 sites mirroring `nvidia/ple_layer.py`), the FP8 embedding stack (`Qwen4ExpPLEFp8EmbeddingMethod`, gather-time dequant, `weight_scale` interception) the AMD tree lacks entirely, `ple_mmap.py` relocated to `common/` | PR against #54129's head branch (its author has no gfx1151 hardware) |
+| `patches/0008-*` + `patches/0012-*` | Oracle admission for block-FP8 fused-MoE on gfx1151 + fp8→bf16 in-kernel upcast in the fused-MoE Triton kernel (the #52970 pattern applied to MoE) + `FN_FP8_MOE` kill-switch + a loud log line at admission; plus the same upcast in the block-scaled **linear** Triton kernel (`FN_FP8_LINEAR`), without which the dense projections still hand fp8 to `tl.dot` | PR to vllm-project/vllm, referencing #52970 |
+| `patches/0009-*` + `patches/0010-*` | The `amd/` PLE port: mmap wiring (5 sites mirroring `nvidia/ple_layer.py`), the FP8 embedding stack (`Qwen4ExpPLEFp8EmbeddingMethod`, gather-time dequant, `weight_scale` interception) the AMD tree lacks entirely, `ple_mmap.py` relocated to `common/` | PR against #54129's head branch (its author has no gfx1151 hardware) |
 
 ## 3. Method and code lifted from the community (per the innovation ledger)
 

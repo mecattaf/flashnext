@@ -1,0 +1,198 @@
+From 2a05f33ad717e214f29b739bbb2e8846d496d4b5 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:02:43 +0200
+Subject: [PATCH 03/12] ROCm detection via KFD topology when amdsmi fails
+
+Adds a KFD-topology fallback so vLLM can (a) select the ROCm platform and
+(b) resolve _GCN_ARCH without initializing HIP/CUDA, when amdsmi cannot
+enumerate GPUs after the ROCm runtime libraries are loaded.
+
+Reads /sys/class/kfd/kfd/topology/nodes/*/properties, keying on
+vendor_id == 0x1002 and a non-zero gfx_target_version; the arch string is
+derived as gfx<major><minor><stepping:x> (the hex stepping is what makes
+gfx90a come out right).
+
+The torch.cuda ultimate fallback now emits a warning_once instead of being
+reached silently.
+
+Cherry-picked-from: vllm-project/vllm#46110
+---
+ tests/test_rocm_kfd_topology.py | 60 +++++++++++++++++++++++++++++++++
+ vllm/platforms/__init__.py      | 30 +++++++++++++++++
+ vllm/platforms/rocm.py          | 38 +++++++++++++++++++--
+ 3 files changed, 126 insertions(+), 2 deletions(-)
+ create mode 100644 tests/test_rocm_kfd_topology.py
+
+diff --git a/tests/test_rocm_kfd_topology.py b/tests/test_rocm_kfd_topology.py
+new file mode 100644
+index 0000000..b30547f
+--- /dev/null
++++ b/tests/test_rocm_kfd_topology.py
+@@ -0,0 +1,60 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from pathlib import Path
++
++from vllm.platforms import _kfd_topology_has_amd_gpu
++
++
++def _write_properties(node: Path, properties: dict[str, int]) -> None:
++    node.mkdir(parents=True)
++    (node / "properties").write_text(
++        "".join(f"{key} {value}\n" for key, value in properties.items()),
++        encoding="utf-8",
++    )
++
++
++def test_kfd_topology_detects_amd_gpu(tmp_path: Path):
++    # CPU node: no GFX target.
++    _write_properties(
++        tmp_path / "0",
++        {
++            "vendor_id": 0,
++            "device_id": 0,
++            "gfx_target_version": 0,
++        },
++    )
++    # GPU node: AMD vendor ID (0x1002) and non-zero GFX target.
++    _write_properties(
++        tmp_path / "1",
++        {
++            "vendor_id": 0x1002,
++            "device_id": 0x1586,
++            "gfx_target_version": 110501,
++        },
++    )
++
++    assert _kfd_topology_has_amd_gpu(str(tmp_path))
++
++
++def test_kfd_topology_rejects_missing_or_non_gpu_nodes(tmp_path: Path):
++    assert not _kfd_topology_has_amd_gpu(str(tmp_path / "missing"))
++
++    _write_properties(
++        tmp_path / "0",
++        {
++            "vendor_id": 0,
++            "device_id": 0,
++            "gfx_target_version": 0,
++        },
++    )
++    _write_properties(
++        tmp_path / "1",
++        {
++            "vendor_id": 0x10DE,
++            "device_id": 0x1234,
++            "gfx_target_version": 110501,
++        },
++    )
++
++    assert not _kfd_topology_has_amd_gpu(str(tmp_path))
+diff --git a/vllm/platforms/__init__.py b/vllm/platforms/__init__.py
+index 718e252..98e4a4e 100644
+--- a/vllm/platforms/__init__.py
++++ b/vllm/platforms/__init__.py
+@@ -107,6 +107,32 @@ def cuda_platform_plugin() -> str | None:
+     return "vllm.platforms.cuda.CudaPlatform" if is_cuda else None
+ 
+ 
++def _kfd_topology_has_amd_gpu(
++    topology_root: str = "/sys/class/kfd/kfd/topology/nodes",
++) -> bool:
++    """Return True if KFD topology exposes at least one AMD GPU node.
++
++    This does not initialize HIP/CUDA and is a useful fallback when amdsmi
++    cannot enumerate GPUs after ROCm runtime libraries are loaded.
++    """
++    try:
++        for node in os.scandir(topology_root):
++            properties_path = os.path.join(node.path, "properties")
++            properties: dict[str, str] = {}
++            with open(properties_path, encoding="utf-8") as f:
++                for line in f:
++                    key, _, value = line.partition(" ")
++                    properties[key] = value.strip()
++            if (
++                int(properties.get("vendor_id", "0")) == 0x1002
++                and int(properties.get("gfx_target_version", "0")) > 0
++            ):
++                return True
++    except (OSError, ValueError):
++        pass
++    return False
++
++
+ def rocm_platform_plugin() -> str | None:
+     is_rocm = False
+     logger.debug("Checking if ROCm platform is available.")
+@@ -125,6 +151,10 @@ def rocm_platform_plugin() -> str | None:
+     except Exception as e:
+         logger.debug("ROCm platform is not available because: %s", str(e))
+ 
++    if not is_rocm and _kfd_topology_has_amd_gpu():
++        is_rocm = True
++        logger.debug("Confirmed ROCm platform via KFD topology.")
++
+     return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None
+ 
+ 
+diff --git a/vllm/platforms/rocm.py b/vllm/platforms/rocm.py
+index 9072c71..84b7466 100644
+--- a/vllm/platforms/rocm.py
++++ b/vllm/platforms/rocm.py
+@@ -196,15 +196,49 @@ def _query_total_memory_from_amdsmi(physical_device_id: int) -> int:
+     return amdsmi_get_gpu_memory_total(handle, AmdSmiMemoryType.VRAM)
+ 
+ 
++def _gfx_arch_from_kfd_target_version(target_version: int) -> str:
++    major = target_version // 10000
++    minor = (target_version // 100) % 100
++    stepping = target_version % 100
++    return f"gfx{major}{minor}{stepping:x}"
++
++
++def _query_gcn_arch_from_kfd_topology() -> str:
++    """Query GCN arch from KFD topology without initializing HIP/CUDA."""
++    topology_root = "/sys/class/kfd/kfd/topology/nodes"
++    for node in os.scandir(topology_root):
++        properties_path = os.path.join(node.path, "properties")
++        properties: dict[str, str] = {}
++        with open(properties_path, encoding="utf-8") as f:
++            for line in f:
++                key, _, value = line.partition(" ")
++                properties[key] = value.strip()
++        target_version = int(properties.get("gfx_target_version", "0"))
++        if int(properties.get("vendor_id", "0")) == 0x1002 and target_version > 0:
++            return _gfx_arch_from_kfd_target_version(target_version)
++    raise RuntimeError("KFD topology did not return valid GCN arch")
++
++
+ def _get_gcn_arch() -> str:
+-    """
+-    Get GCN arch via amdsmi (no CUDA init), fallback to torch.cuda.
++    """Get GCN arch without CUDA init, falling back to torch.cuda.
++
+     Called once at module level; result stored in _GCN_ARCH.
+     """
+     try:
+         return _query_gcn_arch_from_amdsmi()
+     except Exception as e:
+         logger.debug("Failed to get GCN arch via amdsmi: %s", e)
++
++    try:
++        return _query_gcn_arch_from_kfd_topology()
++    except Exception as e:
++        logger.debug("Failed to get GCN arch via KFD topology: %s", e)
++
++    logger.warning_once(
++        "Failed to get GCN arch via amdsmi or KFD topology, falling back "
++        "to torch.cuda. This will initialize CUDA and may cause issues if "
++        "CUDA_VISIBLE_DEVICES is not set yet."
++    )
+     # Ultimate fallback: use torch.cuda (will initialize CUDA)
+     return torch.cuda.get_device_properties("cuda").gcnArchName
+ 
+-- 
+2.55.0
+

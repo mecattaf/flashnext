@@ -1,0 +1,67 @@
+From 1f5b7599faf2b6c6c9d63dc8ae9f8e236e028a1f Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:08:00 +0200
+Subject: [PATCH 06/12] Fix Wave32 LDS overflow in top-k merge launch
+
+top_k_per_row_decode's split/merge path launches the merge kernel with
+1024 threads. topKPerRowJob's static __shared__ union includes
+cub::BlockRadixSort<float, kNumThreadsPerBlock, 2048/kNumThreadsPerBlock,
+int>::TempStorage, whose ranking counters scale with the thread count
+divided by the wave size; on Wave32 parts (RDNA/RDNA3.5) 1024 threads
+push it past the 64 KB LDS limit. Drop the merge block to 512 under
+USE_ROCM (2048 % 512 == 0, so kNumFinalItemsPerThread stays integral).
+
+Also widens the large-vocab test gate from CUDA-only to CUDA-or-ROCm.
+
+Manual resolution notes (diff was cut against an older base):
+- The launch moved from line 711 to line 835; this tree grew a
+  gfx950-only topKPerRowDecodeDeviceLengthAware branch above it.
+- That branch carries two more 1024-thread launches (the split at line
+  769 and its own merge at line 778), as does the useGfx950TopK1024
+  split at line 816. All three are runtime-gated on
+  gcnArchName == "gfx950" (Wave64), so they are compiled but never
+  launched on gfx1151. Left at 1024, matching upstream, which likewise
+  left its kNumThreadsPerSplitBlock at 1024.
+
+Cherry-picked-from: vllm-project/vllm#46012
+---
+ csrc/libtorch_stable/sampler.cu     | 5 +++++
+ tests/kernels/test_top_k_per_row.py | 5 ++++-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/csrc/libtorch_stable/sampler.cu b/csrc/libtorch_stable/sampler.cu
+index ada1c4b..cc86dfe 100644
+--- a/csrc/libtorch_stable/sampler.cu
++++ b/csrc/libtorch_stable/sampler.cu
+@@ -832,7 +832,12 @@ void top_k_per_row_decode(const torch::stable::Tensor& logits, int64_t next_n,
+               outLogitsAux.mutable_data_ptr<float>());
+     }
+ 
++#ifndef USE_ROCM
+     constexpr int kNumThreadsPerBlockMerge = 1024;
++#else
++    // 1024 threads exceed the 64 KB LDS limit on Wave32 GPUs.
++    constexpr int kNumThreadsPerBlockMerge = 512;
++#endif
+     vllm::topKPerRowDecode<kNumThreadsPerBlockMerge, true, false, true>
+         <<<numRows, kNumThreadsPerBlockMerge, topK * sizeof(int32_t), stream>>>(
+             outLogitsAux.const_data_ptr<float>(), seqLens.const_data_ptr<int>(),
+diff --git a/tests/kernels/test_top_k_per_row.py b/tests/kernels/test_top_k_per_row.py
+index bb283e2..902b7ba 100644
+--- a/tests/kernels/test_top_k_per_row.py
++++ b/tests/kernels/test_top_k_per_row.py
+@@ -356,7 +356,10 @@ def test_top_k_per_row_decode(
+     )
+ 
+ 
+-@pytest.mark.skipif(not current_platform.is_cuda(), reason="This test requires CUDA")
++@pytest.mark.skipif(
++    not (current_platform.is_cuda() or current_platform.is_rocm()),
++    reason="top_k_per_row_decode is implemented for CUDA and ROCm",
++)
+ @pytest.mark.parametrize("clean_logits", [True, False])
+ @torch.inference_mode()
+ def test_top_k_per_row_decode_large_vocab_size(clean_logits: bool) -> None:
+-- 
+2.55.0
+

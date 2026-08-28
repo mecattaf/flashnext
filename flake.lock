@@ -264,7 +264,9 @@
         "therock-src-7-15-gfx1151-root": "therock-src-7-15-gfx1151-root",
         "therock-src-7-15-gfx1151-third-party-sysdeps-linux-amd-mesa-mesa-fork-a692c85c": "therock-src-7-15-gfx1151-third-party-sysdeps-linux-amd-mesa-mesa-fork-a692c85c",
         "thunderbolt-ibverbs": "thunderbolt-ibverbs",
-        "vllm-src": "vllm-src",
+        "vllm-src": [
+          "vllm-fork"
+        ],
         "xdna-driver-src": "xdna-driver-src",
         "xrt-src": "xrt-src"
       },
@@ -317,7 +319,8 @@
     "root": {
       "inputs": {
         "nix-strix-halo": "nix-strix-halo",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "vllm-fork": "vllm-fork"
       }
     },
     "spine-triton": {
@@ -976,19 +979,19 @@
         "type": "github"
       }
     },
-    "vllm-src": {
+    "vllm-fork": {
       "flake": false,
       "locked": {
-        "lastModified": 1783899612,
-        "narHash": "sha256-a2OoTfQOJyB8iKBfkfCC23MMBMOHEBjAZ0WGag8hcTQ=",
-        "owner": "vllm-project",
+        "lastModified": 1787952067,
+        "narHash": "sha256-zlkV3ax0CHPnQwHFiXS99EwuVY2idsiwal/vXmC7fPQ=",
+        "owner": "mecattaf",
         "repo": "vllm",
-        "rev": "752a3a504485790a2e8491cacbb35c137339ad34",
+        "rev": "bdb6f0420e797de9266de593326368091085cc3b",
         "type": "github"
       },
       "original": {
-        "owner": "vllm-project",
-        "ref": "v0.25.1",
+        "owner": "mecattaf",
+        "ref": "flashnext",
         "repo": "vllm",
         "type": "github"
       }

@@ -1,0 +1,392 @@
+From 20891a25818d464e8bab614258454dcc8819e590 Mon Sep 17 00:00:00 2001
+From: flashnext <flashnext@leger.run>
+Date: Fri, 28 Aug 2026 23:09:16 +0200
+Subject: [PATCH 08/12] [ROCm] Enable block-FP8 fused MoE on gfx1151 via
+ in-kernel upcast
+
+gfx1151 (Strix Halo, RDNA3.5) is recognised throughout platforms/rocm.py
+(_ON_GFX1151 at :220, the Radeon 8060S PCI id at :78) but is excluded from
+supports_fp8() at :971-972, which returns `on_cdna() or on_rdna4()`. That
+single predicate is what TritonExperts._supports_quant_scheme keys on, so a
+128x128 block-FP8 MoE checkpoint dispatches to no kernel class at all: every
+one of the 14 backends in oracle/fp8.py:_AVAILABLE_BACKENDS rejects, and
+select_fp8_moe_backend raises
+
+    NotImplementedError: No FP8 MoE backend supports the deployment
+    configuration.
+
+from oracle/fp8.py:413-416, during layer construction, before a single
+expert weight byte is read.
+
+The exclusion is a statement about the *matrix unit*: RDNA3.5 has no FP8
+WMMA, so tl.dot cannot consume fp8 operands. It is not a statement about
+whether the Triton fused MoE kernel can serve the scheme -- it can, by
+converting the loaded tiles to bf16 immediately before tl.dot, exactly the
+mechanism upstream added for the block-scaled *linear* kernel in
+vllm-project/vllm#52970 (FORCE_FP8_DOT_UPCAST in fp8_utils.py).
+
+This does the same for the MoE path:
+
+* fused_moe/utils.py gains the FN_FP8_MOE latch (read once at import,
+  default on) plus fp8_moe_gfx1151_admitted() and
+  fp8_moe_gfx1151_dot_upcast(). The latter additionally requires
+  Triton < 3.8.0, matching #52970 -- newer Triton lowers an fp8 tl.dot on
+  gfx1151 itself.
+
+* TritonExperts._supports_quant_scheme appends only
+  (kFp8Static128BlockSym, kFp8Dynamic128Sym) when admitted, and logs once
+  at admission. The per-tensor/per-channel schemes take the fp8_fast_accum
+  `tl.dot(a, b, acc=accumulator)` path, which the upcast does not cover, so
+  they stay refused.
+
+* fused_moe_kernel gains a FORCE_FP8_DOT_UPCAST tl.constexpr (default
+  False) that converts the A/B tiles to bf16 after the K-loop loads.
+  invoke_fused_moe_triton_kernel is the sole launch site of that kernel in
+  the tree, so this covers the gate/up projection, the down projection and
+  the non-modular fused_experts_impl chunked path in one place. It logs
+  once when engaged.
+
+FN_FP8_MOE=0 disables admission and upcast together, restoring the stock
+refusal byte-for-byte. Nothing outside the MoE oracle changes:
+RocmPlatform.supports_fp8() is deliberately untouched.
+
+Adds tests/kernels/moe/test_gfx1151_fp8_admission.py, a GPU-free
+monkeypatched pin on the admission, the kill switch, the gfx1151-only scope
+and the Triton version gate.
+---
+ .../kernels/moe/test_gfx1151_fp8_admission.py | 130 ++++++++++++++++++
+ .../layers/fused_moe/experts/triton_moe.py    |  30 +++-
+ .../layers/fused_moe/fused_moe.py             |  22 +++
+ vllm/model_executor/layers/fused_moe/utils.py |  36 +++++
+ 4 files changed, 217 insertions(+), 1 deletion(-)
+ create mode 100644 tests/kernels/moe/test_gfx1151_fp8_admission.py
+
+diff --git a/tests/kernels/moe/test_gfx1151_fp8_admission.py b/tests/kernels/moe/test_gfx1151_fp8_admission.py
+new file mode 100644
+index 0000000..7dbcb9b
+--- /dev/null
++++ b/tests/kernels/moe/test_gfx1151_fp8_admission.py
+@@ -0,0 +1,130 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""gfx1151 block-FP8 fused-MoE admission gate.
++
++``TritonExperts._supports_quant_scheme`` is the single predicate that decides
++whether a 128x128 block-FP8 MoE dispatches at all on ROCm: ``supports_fp8()``
++is False on gfx1151 (Strix Halo has no FP8 matrix unit), so stock vLLM raises
++``NotImplementedError: No FP8 MoE backend supports the deployment
++configuration.`` from ``select_fp8_moe_backend()`` before a single expert
++weight byte is read.
++
++These tests pin the admission, its ``FN_FP8_MOE=0`` kill switch and the Triton
++version gate on the in-kernel bf16 upcast, all without a GPU.
++"""
++
++import inspect
++import sys
++import types
++
++import pytest
++
++from vllm.model_executor.layers.fused_moe import utils as moe_utils
++from vllm.model_executor.layers.fused_moe.experts.triton_moe import TritonExperts
++from vllm.model_executor.layers.fused_moe.fused_moe import fused_moe_kernel
++from vllm.model_executor.layers.quantization.utils.quant_utils import (
++    kFp8Dynamic128Sym,
++    kFp8Static128BlockSym,
++    kFp8StaticTensorSym,
++)
++from vllm.platforms import current_platform
++
++# The pair Fp8MoEMethod builds for a `weight_block_size: [128, 128]`
++# checkpoint (quantization/fp8.py:488-490).
++BLOCK_FP8_SCHEME = (kFp8Static128BlockSym, kFp8Dynamic128Sym)
++
++
++def _fake_gfx1151(monkeypatch: pytest.MonkeyPatch, *, on_gfx1151: bool) -> None:
++    """Present a ROCm device without native FP8, optionally gfx1151.
++
++    ``vllm.platforms.rocm`` cannot be imported on a CPU-only box -- its
++    module-level ``_GCN_ARCH`` probe falls back to ``torch.cuda`` -- so stub
++    the module instead of the arch string.
++    """
++    monkeypatch.setattr(current_platform, "is_cuda", lambda: False)
++    monkeypatch.setattr(current_platform, "is_rocm", lambda: True)
++    monkeypatch.setattr(current_platform, "supports_fp8", lambda: False)
++
++    rocm_stub = types.ModuleType("vllm.platforms.rocm")
++    rocm_stub.on_gfx1151 = lambda: on_gfx1151
++    monkeypatch.setitem(sys.modules, "vllm.platforms.rocm", rocm_stub)
++
++
++def test_block_fp8_admitted_on_gfx1151(monkeypatch: pytest.MonkeyPatch) -> None:
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(moe_utils, "FN_FP8_MOE", True)
++
++    assert TritonExperts._supports_quant_scheme(*BLOCK_FP8_SCHEME)
++
++
++def test_block_fp8_refused_when_kill_switch_set(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(moe_utils, "FN_FP8_MOE", False)
++
++    assert not TritonExperts._supports_quant_scheme(*BLOCK_FP8_SCHEME)
++
++
++def test_block_fp8_refused_on_other_rocm_devices(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    # The admission is gfx1151-only: every other ROCm device whose
++    # supports_fp8() is False keeps the stock refusal.
++    _fake_gfx1151(monkeypatch, on_gfx1151=False)
++    monkeypatch.setattr(moe_utils, "FN_FP8_MOE", True)
++
++    assert not TritonExperts._supports_quant_scheme(*BLOCK_FP8_SCHEME)
++
++
++def test_per_tensor_fp8_not_admitted_on_gfx1151(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    # Only the block scheme is admitted. The per-tensor schemes take the
++    # fp8_fast_accum `tl.dot(a, b, acc=accumulator)` path, which the upcast
++    # does not cover, so they must stay refused.
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(moe_utils, "FN_FP8_MOE", True)
++
++    assert not TritonExperts._supports_quant_scheme(
++        kFp8StaticTensorSym, kFp8StaticTensorSym
++    )
++
++
++def test_unquantized_scheme_unaffected_by_kill_switch(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(moe_utils, "FN_FP8_MOE", False)
++
++    assert TritonExperts._supports_quant_scheme(None, None)
++
++
++@pytest.mark.parametrize(
++    "triton_version,expect_upcast",
++    [("3.4.0", True), ("3.7.1", True), ("3.8.0", False), ("3.9.0", False)],
++)
++def test_dot_upcast_follows_triton_version(
++    monkeypatch: pytest.MonkeyPatch, triton_version: str, expect_upcast: bool
++) -> None:
++    # Mirrors the linear-path gate of vllm-project/vllm#52970: Triton >= 3.8.0
++    # lowers an fp8 tl.dot on gfx1151 itself.
++    _fake_gfx1151(monkeypatch, on_gfx1151=True)
++    monkeypatch.setattr(moe_utils, "FN_FP8_MOE", True)
++    monkeypatch.setattr(moe_utils.triton, "__version__", triton_version)
++
++    moe_utils.fp8_moe_gfx1151_dot_upcast.cache_clear()
++    try:
++        assert moe_utils.fp8_moe_gfx1151_dot_upcast() is expect_upcast
++    finally:
++        moe_utils.fp8_moe_gfx1151_dot_upcast.cache_clear()
++
++
++def test_kernel_accepts_force_fp8_dot_upcast() -> None:
++    # invoke_fused_moe_triton_kernel() passes FORCE_FP8_DOT_UPCAST by keyword;
++    # keep the kernel signature and the launch site from drifting apart.
++    kernel_fn = getattr(fused_moe_kernel, "fn", fused_moe_kernel)
++    parameters = inspect.signature(kernel_fn).parameters
++
++    assert "FORCE_FP8_DOT_UPCAST" in parameters
++    assert parameters["FORCE_FP8_DOT_UPCAST"].default is False
+diff --git a/vllm/model_executor/layers/fused_moe/experts/triton_moe.py b/vllm/model_executor/layers/fused_moe/experts/triton_moe.py
+index 9887423..9379581 100644
+--- a/vllm/model_executor/layers/fused_moe/experts/triton_moe.py
++++ b/vllm/model_executor/layers/fused_moe/experts/triton_moe.py
+@@ -6,6 +6,7 @@ import torch
+ 
+ import vllm.model_executor.layers.fused_moe.modular_kernel as mk
+ from vllm import _custom_ops as ops
++from vllm.logger import init_logger
+ from vllm.model_executor.layers.fused_moe.activation import (
+     MoEActivation,
+     apply_moe_activation_supported,
+@@ -32,6 +33,7 @@ from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
+ )
+ from vllm.model_executor.layers.fused_moe.utils import (
+     _resize_cache,
++    fp8_moe_gfx1151_admitted,
+     moe_kernel_quantize_input,
+     swiglu_limit_func,
+ )
+@@ -60,6 +62,8 @@ from vllm.platforms import current_platform
+ from vllm.triton_utils import tl
+ from vllm.utils.multi_stream_utils import maybe_execute_in_parallel
+ 
++logger = init_logger(__name__)
++
+ 
+ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
+     """Triton-based fused MoE expert implementation."""
+@@ -145,6 +149,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
+                 # per-tensor weight + dynamic per-tensor activation
+                 (kInt8StaticTensorSym, kInt8DynamicTensorSym),
+             ]
++        gfx1151_upcast = False
+         if current_platform.supports_fp8():
+             supported += [
+                 (kFp8Static128BlockSym, kFp8Dynamic128Sym),
+@@ -153,7 +158,30 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
+                 (kFp8StaticTensorSym, kFp8StaticTensorSym),
+                 (kFp8StaticTensorSym, kFp8DynamicTensorSym),
+             ]
+-        return (weight_key, activation_key) in supported
++        elif fp8_moe_gfx1151_admitted():
++            # gfx1151 (Strix Halo, RDNA3.5) has no FP8 matrix unit, so
++            # supports_fp8() is False and the block-FP8 oracle would reject
++            # every backend. This kernel can still serve the block scheme:
++            # invoke_fused_moe_triton_kernel() upcasts the fp8 A/B tiles to
++            # bf16 before tl.dot, and the block scales are applied in fp32
++            # afterwards exactly as on a native device. Only the block scheme
++            # is admitted -- the per-tensor/per-channel schemes take the
++            # fp8_fast_accum tl.dot path, which has no upcast equivalent here.
++            supported += [
++                (kFp8Static128BlockSym, kFp8Dynamic128Sym),
++            ]
++            gfx1151_upcast = True
++
++        is_supported = (weight_key, activation_key) in supported
++        if gfx1151_upcast and is_supported and weight_key is not None:
++            logger.info_once(
++                "TritonExperts: admitting block-FP8 fused MoE (%sx%s) on "
++                "gfx1151 via in-kernel bf16 upcast; this device has no FP8 "
++                "matrix unit. Set FN_FP8_MOE=0 to restore the stock refusal.",
++                weight_key,
++                activation_key,
++            )
++        return is_supported
+ 
+     @staticmethod
+     def _supports_activation(activation: MoEActivation) -> bool:
+diff --git a/vllm/model_executor/layers/fused_moe/fused_moe.py b/vllm/model_executor/layers/fused_moe/fused_moe.py
+index dc619b2..eb98906 100644
+--- a/vllm/model_executor/layers/fused_moe/fused_moe.py
++++ b/vllm/model_executor/layers/fused_moe/fused_moe.py
+@@ -27,6 +27,7 @@ from vllm.model_executor.layers.fused_moe.moe_align_block_size import (
+ )
+ from vllm.model_executor.layers.fused_moe.utils import (
+     enable_swap_ab,
++    fp8_moe_gfx1151_dot_upcast,
+     moe_kernel_quantize_input,
+     resolve_moe_use_td,
+     warn_if_moe_use_td_ineffective,
+@@ -352,6 +353,9 @@ def fused_moe_kernel(
+     SWAP_AB: tl.constexpr,
+     # Tensor-descriptor path for the A gather and B load in the K-loop.
+     USE_TD: tl.constexpr = False,
++    # Convert the loaded A/B tiles to bf16 before tl.dot. Needed on devices
++    # with no FP8 matrix unit (gfx1151); see fp8_moe_gfx1151_dot_upcast().
++    FORCE_FP8_DOT_UPCAST: tl.constexpr = False,
+ ):
+     """
+     Implements the fused computation for a Mixture of Experts (MOE) using
+@@ -535,6 +539,12 @@ def fused_moe_kernel(
+                 other=0.0,
+             )
+             b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_SIZE_K, other=0.0)
++        if FORCE_FP8_DOT_UPCAST:
++            # No FP8 matrix unit on this device: convert the tiles so tl.dot
++            # lowers to the bf16 path. The dequantizing multiplies below stay
++            # in fp32, so this is numerically the same block-scaled GEMM.
++            a = a.to(tl.bfloat16)
++            b = b.to(tl.bfloat16)
+         # We accumulate along the K dimension.
+         if use_int8_w8a16:
+             accumulator = tl.dot(a, b.to(compute_type), acc=accumulator)
+@@ -863,6 +873,17 @@ def invoke_fused_moe_triton_kernel(
+     if A_scale is not None and A_scale.ndim == 0:
+         A_scale = A_scale.reshape(1)
+ 
++    # gfx1151 has no FP8 matrix unit, so tl.dot cannot consume the fp8 tiles
++    # directly on an older Triton. Upcast them in-kernel instead (same
++    # mechanism as the linear path in vllm-project/vllm#52970).
++    force_fp8_dot_upcast = use_fp8_w8a8 and fp8_moe_gfx1151_dot_upcast()
++    if force_fp8_dot_upcast:
++        logger.info_once(
++            "fused_moe_kernel: upcasting FP8 tiles to bf16 before tl.dot on "
++            "gfx1151 (no FP8 matrix unit). Set FN_FP8_MOE=0 to disable the "
++            "gfx1151 FP8 MoE path entirely."
++        )
++
+     fused_moe_kernel[grid](
+         A,
+         B,
+@@ -906,6 +927,7 @@ def invoke_fused_moe_triton_kernel(
+         BLOCK_SIZE_K=BLOCK_SIZE_K,
+         SWAP_AB=SWAP_AB,
+         USE_TD=use_td,
++        FORCE_FP8_DOT_UPCAST=force_fp8_dot_upcast,
+         **config,
+     )
+ 
+diff --git a/vllm/model_executor/layers/fused_moe/utils.py b/vllm/model_executor/layers/fused_moe/utils.py
+index e1ec850..6ffc543 100644
+--- a/vllm/model_executor/layers/fused_moe/utils.py
++++ b/vllm/model_executor/layers/fused_moe/utils.py
+@@ -1,12 +1,14 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import functools
++import os
+ from collections.abc import Iterable
+ from math import prod
+ from typing import TYPE_CHECKING
+ 
+ import torch
+ import torch.nn.functional as F
++from packaging.version import Version
+ from torch import nn
+ 
+ import vllm.envs as envs
+@@ -653,6 +655,40 @@ def swiglu_limit_func(
+         _swiglu_limit_torch(output, input, swiglu_limit)
+ 
+ 
++# gfx1151 (Strix Halo, RDNA3.5) is a first-class ROCm device in this tree
++# (``platforms/rocm.py`` recognises it) but has no FP8 matrix unit, so
++# ``current_platform.supports_fp8()`` is False there and the block-FP8 MoE
++# oracle rejects every backend. The Triton fused MoE kernel can still serve the
++# scheme by upcasting the fp8 A/B tiles to bf16 immediately before ``tl.dot``,
++# which is what ``fp8_moe_gfx1151_dot_upcast()`` plumbs into the kernel.
++#
++# Latched once at import. ``FN_FP8_MOE=0`` disables the whole mechanism --
++# admission *and* upcast together -- restoring the stock loud refusal from
++# ``select_fp8_moe_backend``.
++FN_FP8_MOE = os.environ.get("FN_FP8_MOE", "1") != "0"
++
++
++def fp8_moe_gfx1151_admitted() -> bool:
++    """Whether gfx1151 is admitted into the block-FP8 fused MoE oracle."""
++    if not FN_FP8_MOE or not current_platform.is_rocm():
++        return False
++
++    from vllm.platforms.rocm import on_gfx1151
++
++    return on_gfx1151()
++
++
++@functools.cache
++def fp8_moe_gfx1151_dot_upcast() -> bool:
++    """Whether ``fused_moe_kernel`` must upcast fp8 tiles before ``tl.dot``.
++
++    Mirrors the linear-path gate added upstream in vllm-project/vllm#52970:
++    Triton >= 3.8.0 lowers an fp8 ``tl.dot`` on gfx1151 itself, older Triton
++    needs the tiles converted in-kernel.
++    """
++    return fp8_moe_gfx1151_admitted() and Version(triton.__version__) < Version("3.8.0")
++
++
+ @functools.lru_cache
+ def enable_swap_ab(BLOCK_SIZE_M: int, BLOCK_SIZE_N: int) -> bool:
+     return (
+-- 
+2.55.0
+

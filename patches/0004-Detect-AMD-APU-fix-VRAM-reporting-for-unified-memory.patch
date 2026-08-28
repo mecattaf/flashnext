@@ -1,0 +1,114 @@
+From 81eae7e775e1951bc28224c29afb7936782ba0a3 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:05:02 +0200
+Subject: [PATCH 04/12] Detect AMD APU, fix VRAM reporting for unified memory
+
+RocmPlatform gains two overrides:
+
+- is_integrated_gpu(): compares the amdgpu sysfs mem_info_vram_total
+  against hipMemGetInfo's total; a >4x gap means HIP is only seeing the
+  small local VRAM aperture of an APU (e.g. Ryzen AI MAX+ 395, gfx1151).
+- mem_get_info(): when an APU is detected, returns (free, total) derived
+  from sysfs mem_info_gtt_total / mem_info_gtt_used with an 8 GiB reserve
+  for system and driver overhead, instead of the VRAM aperture.
+
+Manual resolution notes (diff was cut against an older base):
+- import block: this tree has "import os / import platform", so glob was
+  inserted above os rather than into the context the diff carried.
+- restyled to this tree's ruff format (double quotes, 88 cols, UP015
+  redundant open mode dropped); logic is byte-for-intent upstream's.
+- mem_get_info has no base-class declaration in this tree; it resolves
+  through Platform.__getattr__ to torch.cuda.mem_get_info (RocmPlatform
+  device_type == "cuda"). The classmethod added here shadows that
+  fallback. Its signature matches the neighbouring
+  get_current_memory_usage convention and torch.cuda.mem_get_info.
+
+Cherry-picked-from: vllm-project/vllm#40963
+---
+ vllm/platforms/rocm.py | 63 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+
+diff --git a/vllm/platforms/rocm.py b/vllm/platforms/rocm.py
+index 84b7466..08fbcaa 100644
+--- a/vllm/platforms/rocm.py
++++ b/vllm/platforms/rocm.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
++import glob
+ import os
+ import platform
+ from datetime import timedelta
+@@ -1031,6 +1032,68 @@ class RocmPlatform(Platform):
+     def is_navi(cls) -> bool:
+         return "gfx1" in _GCN_ARCH
+ 
++    @classmethod
++    def is_integrated_gpu(cls, device_id: int = 0) -> bool:
++        """Detect AMD APU (integrated GPU sharing system memory).
++
++        On AMD APUs (e.g. Ryzen AI MAX+ 395, gfx1151), the HIP runtime
++        reports a small VRAM aperture as total memory via hipMemGetInfo,
++        even though the GPU can access much more through unified memory.
++        We detect this by comparing HIP-reported total with the sysfs
++        VRAM total reported by the amdgpu kernel driver.
++        """
++        try:
++            drm_cards = glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")
++            if not drm_cards:
++                return False
++            with open(drm_cards[0]) as f:
++                sysfs_vram = int(f.read().strip())
++            _, hip_total = torch.cuda.mem_get_info(device_id)
++            # If sysfs reports >4x more VRAM than HIP, this is an APU
++            # where HIP only sees the small local VRAM aperture
++            return sysfs_vram > hip_total * 4
++        except Exception:
++            return False
++
++    @classmethod
++    def mem_get_info(cls, device: torch.types.Device | None = None) -> tuple[int, int]:
++        """Return (free, total) GPU memory in bytes.
++
++        On AMD APUs with unified memory, hipMemGetInfo returns the VRAM
++        aperture size (~16 GiB) as total, while free correctly reflects
++        GTT/unified memory. This causes vLLM to crash with OOM when
++        allocating KV cache because it bases the calculation on total.
++
++        When an APU is detected, we read the true memory sizes from sysfs
++        (mem_info_gtt_total / mem_info_gtt_used) and reserve 8 GiB for
++        system and driver overhead.
++        """
++        free, total = torch.cuda.mem_get_info(device)
++        if cls.is_integrated_gpu():
++            try:
++                drm_cards = glob.glob("/sys/class/drm/card*/device/mem_info_gtt_total")
++                if drm_cards:
++                    card_dir = os.path.dirname(drm_cards[0])
++                    with open(os.path.join(card_dir, "mem_info_gtt_total")) as f:
++                        gtt_total = int(f.read().strip())
++                    with open(os.path.join(card_dir, "mem_info_gtt_used")) as f:
++                        gtt_used = int(f.read().strip())
++                    # Reserve 8 GiB for system/driver overhead
++                    safe_total = gtt_total - (8 * 1024**3)
++                    safe_free = max(0, safe_total - gtt_used)
++                    logger.info_once(
++                        "AMD APU detected: using sysfs GTT memory "
++                        "(total=%.1f GiB, free=%.1f GiB) instead of "
++                        "HIP-reported VRAM aperture (%.1f GiB).",
++                        safe_total / (1024**3),
++                        safe_free / (1024**3),
++                        total / (1024**3),
++                    )
++                    return int(safe_free), int(safe_total)
++            except Exception:
++                pass
++        return free, total
++
+     @classmethod
+     def get_static_graph_wrapper_cls(cls) -> str:
+         return "vllm.compilation.cuda_graph.CUDAGraphWrapper"
+-- 
+2.55.0
+

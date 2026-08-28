@@ -1,0 +1,45 @@
+diff --git a/csrc/libtorch_stable/sampler.cu b/csrc/libtorch_stable/sampler.cu
+index cc86dfe..7d924dc 100644
+--- a/csrc/libtorch_stable/sampler.cu
++++ b/csrc/libtorch_stable/sampler.cu
+@@ -766,7 +766,14 @@ void top_k_per_row_decode(const torch::stable::Tensor& logits, int64_t next_n,
+           {numRows, multipleBlocksPerRowConfig, topK},
+           torch::headeronly::ScalarType::Float, std::nullopt, logits.device());
+ 
++#ifndef USE_ROCM
+       constexpr int kNumThreadsPerSplitBlock = 1024;
++#else
++      // 1024 threads exceed the 64 KB LDS limit on Wave32 GPUs. This launch
++      // is gfx950-gated at runtime, but the instantiation is still compiled
++      // for every target arch in the build.
++      constexpr int kNumThreadsPerSplitBlock = 512;
++#endif
+       vllm::topKPerRowDecodeDeviceLengthAware<kNumThreadsPerSplitBlock>
+           <<<dim3(numRows, multipleBlocksPerRowConfig),
+              kNumThreadsPerSplitBlock, 2 * topK * sizeof(int32_t), stream>>>(
+@@ -775,7 +782,12 @@ void top_k_per_row_decode(const torch::stable::Tensor& logits, int64_t next_n,
+               static_cast<int>(stride1), static_cast<int>(topK),
+               static_cast<int>(next_n), seqLensIs2D,
+               outLogitsAux.mutable_data_ptr<float>());
++#ifndef USE_ROCM
+       constexpr int kNumThreadsPerBlockMerge = 1024;
++#else
++      // 1024 threads exceed the 64 KB LDS limit on Wave32 GPUs.
++      constexpr int kNumThreadsPerBlockMerge = 512;
++#endif
+       vllm::topKPerRowDecodeDeviceLengthAware<kNumThreadsPerBlockMerge, true>
+           <<<numRows, kNumThreadsPerBlockMerge, topK * sizeof(int32_t),
+              stream>>>(
+@@ -812,7 +824,12 @@ void top_k_per_row_decode(const torch::stable::Tensor& logits, int64_t next_n,
+         torch::headeronly::ScalarType::Float, std::nullopt, logits.device());
+ 
+     if (useGfx950TopK1024) {
++#ifndef USE_ROCM
+       constexpr int kNumThreadsPerSplitBlock = 1024;
++#else
++      // 1024 threads exceed the 64 KB LDS limit on Wave32 GPUs.
++      constexpr int kNumThreadsPerSplitBlock = 512;
++#endif
+       vllm::topKPerRowDecode<kNumThreadsPerSplitBlock, true, true>
+           <<<dim3(numRows, multipleBlocksPerRowConfig),
+              kNumThreadsPerSplitBlock, 2 * topK * sizeof(int32_t), stream>>>(

@@ -1,0 +1,251 @@
+From 2af98e099af78ef75ae5cf4b53bce2af891d32be Mon Sep 17 00:00:00 2001
+From: flashnext <flashnext@leger.run>
+Date: Fri, 28 Aug 2026 23:06:26 +0200
+Subject: [PATCH 02/12] flashnext: add tools/check_nix_substrate.py packaging
+ guard
+
+The nix vllm-rocm derivation drives this source through nixpkgs' numbered
+patches and then through nix-strix-halo's assigned postPatch, which is a
+chain of substituteInPlace --replace-fail calls. --replace-fail aborts the
+build on a missed match and the postPatch is assigned rather than appended,
+so a downstream overridePythonAttrs cannot recover from a miss. None of
+that machinery lives in this repo, so a routine refactor here can break the
+packaging lane with no local signal until a multi-hour HIP rebuild aborts.
+
+The script asserts, in-tree and in seconds:
+  - the rm target vllm/third_party/pynvml.py still exists;
+  - the five --replace-fail literals the overlay searches for are present;
+  - the pre-image anchors nixpkgs' 0002/0003/0005 patches need (including
+    the registry.py line 0003 rewrites into the sixth --replace-fail
+    literal, which is why that literal is absent from a clean tree);
+  - no file under vllm/models/qwen4_exp/, vllm/v1/spec_decode/qwen4_exp.py
+    or vllm/transformers_utils/configs/qwen4_exp.py imports one of the 22
+    dependency names the overlay strips from the closure.
+
+Stdlib only, no new dependency. --warn-only is the kill switch; failures
+always print loudly to stderr with the file:line of the offending import
+or the exact literal that went missing.
+---
+ tools/check_nix_substrate.py | 210 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 210 insertions(+)
+ create mode 100644 tools/check_nix_substrate.py
+
+diff --git a/tools/check_nix_substrate.py b/tools/check_nix_substrate.py
+new file mode 100644
+index 0000000..1269a72
+--- /dev/null
++++ b/tools/check_nix_substrate.py
+@@ -0,0 +1,210 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++"""Assert this tree can still be packaged by the nix `vllm-rocm` derivation.
++
++That derivation drives the source through two mechanisms that both fail the
++build outright when they stop matching:
++
++  * nixpkgs' `pkgs/development/python-modules/vllm` applies numbered `.patch`
++    files in `patchPhase`;
++  * `nix-strix-halo`'s `overlays/therock-vllm.nix` then runs a `postPatch` of
++    `substituteInPlace --replace-fail` calls -- `--replace-fail` aborts on a
++    missed match, and the overlay *assigns* `postPatch`, so a downstream
++    `overridePythonAttrs` cannot append its way out of a miss.
++
++Neither mechanism lives in this repository, so an ordinary refactor here can
++break the packaging lane with no local signal. Run this before pushing a
++branch that the nix lane consumes:
++
++    python3 tools/check_nix_substrate.py
++
++Exit code 1 means the nix build will abort. `--warn-only` downgrades that to
++a report (kill switch for a tree that is knowingly mid-migration).
++"""
++
++import argparse
++import re
++import sys
++from pathlib import Path
++
++REPO_ROOT = Path(__file__).resolve().parent.parent
++
++# Files the overlay deletes outright. A missing file makes `rm` fail.
++REMOVED_FILES = [
++    ("vllm/third_party/pynvml.py", "therock-vllm.nix:258 `rm`"),
++]
++
++# (path, literal, provenance). Each literal is the *search* side of a
++# `--replace-fail`, so it must occur verbatim at least once.
++REPLACE_FAIL_LITERALS = [
++    (
++        "tests/utils.py",
++        "from vllm.third_party.pynvml import",
++        "therock-vllm.nix:259-262",
++    ),
++    (
++        "vllm/utils/import_utils.py",
++        "import vllm.third_party.pynvml as pynvml",
++        "therock-vllm.nix:263-266",
++    ),
++    (
++        "pyproject.toml",
++        '"torch == 2.11.0"',
++        "therock-vllm.nix:268-269",
++    ),
++    (
++        "CMakeLists.txt",
++        "set(PYTHON_SUPPORTED_VERSIONS",
++        "therock-vllm.nix:271-274",
++    ),
++    (
++        "setup.py",
++        "rust_extensions=rust_extensions,",
++        "therock-vllm.nix:279-282",
++    ),
++]
++
++# The sixth `--replace-fail` (therock-vllm.nix:288-291) searches for a line
++# that nixpkgs' own 0003-propagate-pythonpath.patch *introduces*, so what this
++# tree must carry is that patch's pre-image, not the literal itself.
++PATCH_ANCHORS = [
++    (
++        "setup.py",
++        "from torch.utils.cpp_extension import CUDA_HOME, ROCM_HOME",
++        "nixpkgs 0002-setup.py-nix-support-respect-cmakeFlags.patch hunk 1",
++    ),
++    (
++        "setup.py",
++        '"-DVLLM_TARGET_DEVICE={}".format(VLLM_TARGET_DEVICE),',
++        "nixpkgs 0002-setup.py-nix-support-respect-cmakeFlags.patch hunk 2",
++    ),
++    (
++        "vllm/model_executor/models/registry.py",
++        "_SUBPROCESS_COMMAND, input=input_bytes, capture_output=True",
++        "nixpkgs 0003-propagate-pythonpath.patch, feeds therock-vllm.nix:288-291",
++    ),
++    (
++        "requirements/cpu.txt",
++        'intel-openmp==2024.2.1; platform_machine == "x86_64"',
++        "nixpkgs 0005-drop-intel-reqs.patch",
++    ),
++]
++
++# Dependency names `therock-vllm.nix:92-114` strips from the closure, mapped
++# to the module names an import statement would actually use.
++STRIPPED_DEP_MODULES = [
++    "bitsandbytes",
++    "conch_triton_kernels",
++    "cv2",
++    "datasets",
++    "fastsafetensors",
++    "mistral_common",
++    "mistralai",
++    "outlines",
++    "outlines_core",
++    "peft",
++    "pyarrow",
++    "pytest_asyncio",
++    "quark",
++    "runai_model_streamer",
++    "tensorizer",
++    "tilelang",
++    "timm",
++    "torchcodec",
++    "tvm_ffi",
++    "xformers",
++]
++
++# The surface this fork adds on top of upstream. Upstream guards its own
++# optional imports of the stripped names; ours must simply not have any.
++FORK_ADDED_PATHS = [
++    "vllm/models/qwen4_exp",
++    "vllm/v1/spec_decode/qwen4_exp.py",
++    "vllm/transformers_utils/configs/qwen4_exp.py",
++]
++
++IMPORT_RE = re.compile(
++    r"^\s*(?:from\s+(?P<from>[A-Za-z_][\w.]*)|import\s+(?P<import>[A-Za-z_][\w.]*))",
++)
++
++
++def _iter_python_files(rel: str):
++    path = REPO_ROOT / rel
++    if path.is_file():
++        yield path
++    elif path.is_dir():
++        yield from sorted(path.rglob("*.py"))
++
++
++def check_removed_files(failures: list[str]) -> None:
++    for rel, provenance in REMOVED_FILES:
++        if not (REPO_ROOT / rel).exists():
++            failures.append(f"{rel}: does not exist, but {provenance} deletes it")
++
++
++def check_literals(failures: list[str]) -> None:
++    for rel, literal, provenance in REPLACE_FAIL_LITERALS + PATCH_ANCHORS:
++        path = REPO_ROOT / rel
++        if not path.exists():
++            failures.append(f"{rel}: missing, expected by {provenance}")
++            continue
++        if literal not in path.read_text(encoding="utf-8"):
++            failures.append(f"{rel}: {provenance} needs the literal {literal!r}")
++
++
++def check_stripped_deps(failures: list[str]) -> None:
++    stripped = set(STRIPPED_DEP_MODULES)
++    for rel in FORK_ADDED_PATHS:
++        for path in _iter_python_files(rel):
++            for lineno, line in enumerate(
++                path.read_text(encoding="utf-8").splitlines(), start=1
++            ):
++                match = IMPORT_RE.match(line)
++                if match is None:
++                    continue
++                module = match.group("from") or match.group("import")
++                if module.split(".")[0] in stripped:
++                    rel_path = path.relative_to(REPO_ROOT)
++                    failures.append(
++                        f"{rel_path}:{lineno}: imports {module!r}, which "
++                        f"therock-vllm.nix:92-114 strips from the closure"
++                    )
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument(
++        "--warn-only",
++        action="store_true",
++        help="report problems but always exit 0",
++    )
++    args = parser.parse_args()
++
++    failures: list[str] = []
++    check_removed_files(failures)
++    check_literals(failures)
++    check_stripped_deps(failures)
++
++    if not failures:
++        print("nix substrate compatibility: OK")
++        return 0
++
++    print("=" * 72, file=sys.stderr)
++    print(
++        f"NIX SUBSTRATE COMPATIBILITY BROKEN ({len(failures)} problem(s)). "
++        "The vllm-rocm derivation will abort during patchPhase/postPatch.",
++        file=sys.stderr,
++    )
++    for failure in failures:
++        print(f"  - {failure}", file=sys.stderr)
++    print("=" * 72, file=sys.stderr)
++
++    if args.warn_only:
++        print("--warn-only given; exiting 0 anyway", file=sys.stderr)
++        return 0
++    return 1
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+-- 
+2.55.0
+

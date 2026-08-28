@@ -1,0 +1,152 @@
+From 8f60fad27d7d4d965a225202ef35dfe636444551 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@leger.run>
+Date: Fri, 28 Aug 2026 23:09:28 +0200
+Subject: [PATCH 07/12] fork: kill-switch and loud logging for the APU memory
+ path
+
+NOT a cherry-pick. Fork-local hardening of the mechanism #40963
+introduces, required by the flashnext quality bar: every mechanism needs
+a kill-switch and a loud log line, and silent fallback is forbidden.
+
+As merged, #40963 flips RocmPlatform.is_integrated_gpu() to True on this
+APU with no log output at all on the path that actually consumes it (see
+REPORT.md), and swallows every sysfs failure with a bare `except: pass`.
+
+- New env VLLM_ROCM_APU_UNIFIED_MEMORY (default True, i.e. #40963's
+  behaviour). Setting it to 0 restores stock discrete-GPU accounting.
+- is_integrated_gpu() now logs its verdict with both measured numbers and
+  names the override env var, and warns loudly on every failure path
+  instead of returning False silently.
+- mem_get_info() warns loudly when APU mode is on but the GTT sysfs read
+  is missing or fails, instead of silently returning the VRAM aperture.
+- is_integrated_gpu() gains @lru_cache(maxsize=8), matching
+  get_device_capability / get_device_name in this file. It is called once
+  per module from model_loader/utils.py's
+  release_device_memory_under_pressure(); globbing sysfs and calling
+  hipMemGetInfo on every one of those is not acceptable.
+
+Drop this commit to get the four cherry-picks verbatim.
+---
+ vllm/envs.py           |  7 ++++++
+ vllm/platforms/rocm.py | 54 ++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 57 insertions(+), 4 deletions(-)
+
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 8214578..2dd714f 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -150,6 +150,7 @@ if TYPE_CHECKING:
+     VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS: bool = False
+     VLLM_ROCM_USE_AITER_TRITON_GEMM: bool = True
+     VLLM_ROCM_USE_SKINNY_GEMM: bool = True
++    VLLM_ROCM_APU_UNIFIED_MEMORY: bool = True
+     VLLM_ROCM_FP8_PADDING: bool = True
+     VLLM_ROCM_MOE_PADDING: bool = True
+     VLLM_ROCM_SHUFFLE_KV_CACHE_LAYOUT: bool = False
+@@ -1344,6 +1345,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_ROCM_USE_SKINNY_GEMM": lambda: (
+         os.getenv("VLLM_ROCM_USE_SKINNY_GEMM", "True").lower() in ("true", "1")
+     ),
++    # Treat AMD APUs (integrated GPUs sharing system memory, e.g. gfx1151)
++    # as unified-memory devices. Set to 0 to force the stock discrete-GPU
++    # memory accounting, i.e. trust hipMemGetInfo's VRAM aperture.
++    "VLLM_ROCM_APU_UNIFIED_MEMORY": lambda: (
++        os.getenv("VLLM_ROCM_APU_UNIFIED_MEMORY", "True").lower() in ("true", "1")
++    ),
+     # Pad the fp8 weights to 256 bytes for ROCm
+     "VLLM_ROCM_FP8_PADDING": lambda: bool(int(os.getenv("VLLM_ROCM_FP8_PADDING", "1"))),
+     # Pad the weights for the moe kernel
+diff --git a/vllm/platforms/rocm.py b/vllm/platforms/rocm.py
+index 08fbcaa..0ca2abd 100644
+--- a/vllm/platforms/rocm.py
++++ b/vllm/platforms/rocm.py
+@@ -1033,6 +1033,7 @@ class RocmPlatform(Platform):
+         return "gfx1" in _GCN_ARCH
+ 
+     @classmethod
++    @lru_cache(maxsize=8)
+     def is_integrated_gpu(cls, device_id: int = 0) -> bool:
+         """Detect AMD APU (integrated GPU sharing system memory).
+ 
+@@ -1041,20 +1042,53 @@ class RocmPlatform(Platform):
+         even though the GPU can access much more through unified memory.
+         We detect this by comparing HIP-reported total with the sysfs
+         VRAM total reported by the amdgpu kernel driver.
++
++        Kill-switch: VLLM_ROCM_APU_UNIFIED_MEMORY=0 forces the stock
++        discrete-GPU answer (False), restoring pre-#40963 behaviour.
+         """
++        if not envs.VLLM_ROCM_APU_UNIFIED_MEMORY:
++            logger.info_once(
++                "VLLM_ROCM_APU_UNIFIED_MEMORY=0: skipping AMD APU detection, "
++                "treating this GPU as discrete."
++            )
++            return False
++
+         try:
+             drm_cards = glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")
+             if not drm_cards:
++                logger.warning_once(
++                    "AMD APU detection: no amdgpu sysfs node matched "
++                    "/sys/class/drm/card*/device/mem_info_vram_total; "
++                    "treating this GPU as discrete. If this is an APU, memory "
++                    "accounting will trust the HIP VRAM aperture and KV cache "
++                    "sizing will be wrong."
++                )
+                 return False
+             with open(drm_cards[0]) as f:
+                 sysfs_vram = int(f.read().strip())
+             _, hip_total = torch.cuda.mem_get_info(device_id)
+             # If sysfs reports >4x more VRAM than HIP, this is an APU
+             # where HIP only sees the small local VRAM aperture
+-            return sysfs_vram > hip_total * 4
+-        except Exception:
++            is_apu = sysfs_vram > hip_total * 4
++        except Exception as e:
++            logger.warning_once(
++                "AMD APU detection failed (%s); treating this GPU as discrete. "
++                "If this is an APU, memory accounting will trust the HIP VRAM "
++                "aperture and KV cache sizing will be wrong.",
++                e,
++            )
+             return False
+ 
++        logger.info_once(
++            "AMD APU detection: sysfs VRAM total %.1f GiB vs HIP-reported "
++            "total %.1f GiB -> integrated_gpu=%s (set "
++            "VLLM_ROCM_APU_UNIFIED_MEMORY=0 to override).",
++            sysfs_vram / (1024**3),
++            hip_total / (1024**3),
++            is_apu,
++        )
++        return is_apu
++
+     @classmethod
+     def mem_get_info(cls, device: torch.types.Device | None = None) -> tuple[int, int]:
+         """Return (free, total) GPU memory in bytes.
+@@ -1090,8 +1124,20 @@ class RocmPlatform(Platform):
+                         total / (1024**3),
+                     )
+                     return int(safe_free), int(safe_total)
+-            except Exception:
+-                pass
++                logger.warning_once(
++                    "AMD APU detected but no sysfs GTT node matched "
++                    "/sys/class/drm/card*/device/mem_info_gtt_total; falling "
++                    "back to the HIP-reported VRAM aperture (%.1f GiB total).",
++                    total / (1024**3),
++                )
++            except Exception as e:
++                logger.warning_once(
++                    "AMD APU detected but reading sysfs GTT memory failed "
++                    "(%s); falling back to the HIP-reported VRAM aperture "
++                    "(%.1f GiB total).",
++                    e,
++                    total / (1024**3),
++                )
+         return free, total
+ 
+     @classmethod
+-- 
+2.55.0
+
