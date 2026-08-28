@@ -86,7 +86,7 @@ class RepoInvariants(unittest.TestCase):
     def test_scripts_are_syntax_clean(self):
         for sh in (ROOT / "scripts").glob("*.sh"):
             subprocess.run(["bash", "-n", str(sh)], check=True)
-        for sh in (ROOT / "host").glob("*.sh"):
+        for sh in (ROOT / "host").rglob("*.sh"):
             subprocess.run(["bash", "-n", str(sh)], check=True)
         for py in (ROOT / "scripts").glob("*.py"):
             subprocess.run(["python3", "-m", "py_compile", str(py)],

@@ -7,6 +7,7 @@
     {"seq": 3, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "6.2", "task": "bench-harness", "acceptance": ["bench-honest-client"], "evidence": ["specs/flashnext/evidence/nix-strix-halo.md"]},
     {"seq": 4, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "5.2", "task": "catalog-handoff", "acceptance": ["catalog-patch-wellformed"], "evidence": ["specs/flashnext/evidence/dotfiles-observed.md"]},
     {"seq": 5, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "4.1", "task": "proxy-tooling", "acceptance": ["proxy-scripts-clean"], "evidence": ["specs/flashnext/evidence/ple-54129.md", "specs/flashnext/evidence/moe-dispatch.md"]},
-    {"seq": 6, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "7.1", "task": "morning-ledger", "acceptance": ["ledger-sections"], "evidence": []}
+    {"seq": 6, "at": "2026-08-28T23:20:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "7.1", "task": "morning-ledger", "acceptance": ["ledger-sections"], "evidence": []},
+    {"seq": 7, "at": "2026-08-28T23:55:00+02:00", "kind": "sitting", "sitting": "flashnext/s1", "claim": "6.4", "task": "rdma-package", "acceptance": ["rdma-package-sound"], "evidence": ["specs/flashnext/evidence/ds4-vllm-manifest.md"]}
   ]
 }

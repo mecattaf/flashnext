@@ -206,6 +206,29 @@
       "conflictDomains": ["handoff"]
     },
     {
+      "id": "rdma-package",
+      "kind": "implementation",
+      "title": "Integrate the operator-attended RDMA package under host/rdma",
+      "goal": "The bootstrap session scoped an operator-attended RDMA bring-up package (spec ruling P7, claim 6.4 — specs/flashnext/spec.md#r6): host/rdma/fetch-and-build.sh (pinned out-of-tree module fetch, kernel-version and secure-boot guards, staged install only), host/rdma/attended-bringup.md (the coordinated-reboot checklist with the port-controller recovery path), host/rdma/ab-protocol.md (the socket-versus-verbs adoption gate). If those files already exist in the tree, verify them against the reference bring-up doctrine in specs/flashnext/evidence/ds4-vllm-manifest.md section 7 and fix defects; if absent, author them from that section's pins. Hard rules: nothing GPL is vendored — the two out-of-tree repositories are fetched at their pinned commits by the script; nothing installs or loads automatically; one rail only; the checklist states plainly that bring-up happens with the operator physically present. Extend the tests suite so the syntax sweep covers host/rdma and a test asserts the two pin commits appear in fetch-and-build.sh. Boundaries: touch only host/rdma and tests/.",
+      "deliveredBehaviors": [
+        "Tomorrow's attended RDMA bring-up is one script plus one checklist plus one adoption gate",
+        "No unsigned module can load unattended from anything this repo ships"
+      ],
+      "readFirst": {
+        "specSections": ["specs/flashnext/spec.md#r6", "specs/flashnext/evidence/ds4-vllm-manifest.md"],
+        "styleReferences": ["scripts/stage-weights.sh"]
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "rdma-package-sound",
+          "description": "Scripts syntax-clean, pins present, no auto-install, attended language present.",
+          "argv": ["bash", "-euc", "bash -n host/rdma/fetch-and-build.sh && grep -q '503c5ae1e72aa9ed91925dafa3d82ee2e992747f' host/rdma/fetch-and-build.sh && grep -q '76ba39b630a70accb72f19388eefe48844b50eb8' host/rdma/fetch-and-build.sh && ! grep -qE 'insmod|modprobe .*usb4' host/rdma/fetch-and-build.sh && grep -qi 'physically present' host/rdma/attended-bringup.md && test -s host/rdma/ab-protocol.md"]
+        }
+      ],
+      "dependencies": [],
+      "conflictDomains": ["host/rdma", "tests"]
+    },
+    {
       "id": "cp-weights",
       "kind": "checkpoint",
       "title": "Checkpoint: stage the workload checkpoint onto both nodes",

@@ -65,6 +65,10 @@ a silent skip.
   first light, the yardstick for every later change.
 - morning ledger (NEW) — docs/MORNING.md, rendered overnight: receipts, open
   items, promotion checklist, blocker entries.
+- RDMA package (NEW) — the operator-attended fast-path bring-up prepared under
+  host/rdma: pinned out-of-tree module fetch (never vendored), the single-rail
+  contract, the coordinated-reboot checklist, and the socket-versus-verbs
+  measurement protocol.
 
 ## Rulings
 
@@ -76,7 +80,7 @@ a silent skip.
 | P4 | engine substrate | nix-native primary: the fleet flake input's engine derivation with source repointed at the fork and our patches injected, on the substrate already realized in this machine's store (torch 2.11.0 wheels, the 8.4 G SDK, a compiled engine at the old version) — the fork carries a substrate-compat commit satisfying the packaging literals including the torch pin; container fallback: stable-index torch 2.13.0+rocm7.14.0 wheels with the fork built from source; the first successful lane serves the night and the build receipt names it |
 | P5 | admission shape | the admission extends the upcast mechanism of upstream pull request 52970 to the fused-mixture oracle; refusal stays loud; FN_FP8_MOE=0 restores the stock refusal; no silent fallback is added |
 | P6 | cherry-picks | upstream pull requests 46012, 40963, 51511, 46110 enter the fork with Cherry-picked-from trailers; 44331, 46186, 46676 receive no task in this campaign and are recorded in IMPORTS.md for the four-bit lane |
-| P7 | transport | socket transport on both rails, both named to the collective library; RDMA receives no requirement, no task, no code path |
+| P7 | transport | socket transport on both rails is the overnight transport of record, both rails named to the collective library; the RDMA package is prepared overnight but brought up only operator-attended, on one rail only — its modules are unsigned and kernel-pinned and its bring-up needs a coordinated dual reboot that has previously wedged the port controller; adoption only on a counterbalanced win |
 | P8 | weights | staged library-to-node by scripts/stage-weights.sh with a per-file digest manifest; the fleet catalog row is a morning operator act prepared under handoff/; runtime hub downloads stay forbidden |
 | P9 | unattended overnight | GPU checkpoints run unattended; a wedge needing physical presence ends the campaign with the blocker typed in the morning ledger; no overnight reboot of either node |
 | P10 | first light mode | the table path's own guard demands piecewise capture with the mmap operation as a split boundary and refuses plain eager — first light runs that sanctioned mode; full-graph capture is morning work |
@@ -126,12 +130,14 @@ Why: a number without its protocol is an anecdote; the harness and its client ar
 6.1 the pair-service tooling lands under `host/` → unit files carry a stop-post teardown and no boot-time install, asserted by the tests suite. [gate: repo-tests]
 6.2 the bench client separates queue wait from prefill → a client unit test with injected queueing passes in the tests suite. [gate: repo-tests]
 6.3 the bench matrix runs per ruling P12 → a bench receipt records three (given) loads per arm, counterbalanced, with token fingerprints, and rows committed under `results/`. [gate: receipts-verify]
+6.4 the RDMA package lands per ruling P7 → its scripts pass the syntax sweep and its module fetch stays pinned, asserted by the tests suite. [gate: repo-tests]
 
 ### R7 — the morning and the blocker protocol
 Why: promotion is a human act and the campaign's failure mode is typed, never silent.
 7.1 the morning ledger renders overnight → the operator reads receipts, open items, and the promotion checklist in one file. [HUMAN-ATTENDED]
 7.2 an overnight step fails for an upstream cause → drafted issue text lands under `handoff/upstream-issues/` and the morning ledger names the blocker. [HUMAN-ATTENDED]
 7.3 the morning operator reviews receipts and ledger at a keyboard → a promotion or blocker disposition is recorded, the catalog patch applied on promotion. [HUMAN-ATTENDED]
+7.4 the operator brings the RDMA package up attended, one rail, per its checklist → a socket-versus-verbs comparison lands under `results/` before any transport adoption. [HUMAN-ATTENDED]
 
 ## Unchanged
 
@@ -168,7 +174,7 @@ optimization menu in the morning ledger. Claims R7; ruling P13.
 
 ## Forbidden
 
-F.1 Never bring RDMA up on either rail.
+F.1 Never load an unsigned kernel module or bring RDMA up unattended, and never on both rails.
 F.2 Do not import the upstream tuning module into any host closure.
 F.3 Do not add keys to the worklist schema.
 F.4 Never write under specs/flashnext/ from any lane.

@@ -74,8 +74,11 @@ the [evidence](specs/flashnext/evidence/)):
 
 - **The wire is not your TP=2 limiter** — but an unheld CPU C-state is. Hold
   `/dev/cpu_dma_latency` at 0 on **both** ends (577 µs → 63–90 µs RTT, free).
-  Three independent measurements say RDMA buys ≈3% over TCP here; skip the
-  kernel modules.
+  RDMA measures ≈+3.4% decode over held TCP here — worth taking, but it means
+  unsigned kernel-pinned modules and a coordinated dual reboot, so it's a
+  day-2 attended lane in this repo (`host/rdma/`), never the overnight path.
+  One rail only: two RDMA rails cross-match Thunderbolt HELLOs and poison
+  HopID state.
 - **`gpu-memory-utilization` lies on this APU** without vLLM PR #40963: HIP
   reports the small VRAM aperture as "total". The fix reads sysfs GTT.
 - **`top_k_per_row_decode` overflows the 64 KB LDS on wave32** at its stock
