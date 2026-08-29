@@ -1,9 +1,9 @@
 {
  "step": "weights-worker",
  "status": "pass",
- "ts": "2026-08-29T04:13:41",
+ "ts": "2026-08-29T12:47:30",
  "data": {
   "shards": 131,
-  "bytes": 185563801379
+  "bytes": 185563854698
  }
 }

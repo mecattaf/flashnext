@@ -45,6 +45,18 @@ if [ -n "$RECEIPT" ]; then
   python3 - "$RECEIPT" "$status" "$local_shards" "$local_bytes" <<'PY'
 import json, sys, time
 path, status, shards, bytes_ = sys.argv[1:5]
+# Idempotent re-verify: an unchanged pass leaves the committed receipt
+# byte-for-byte alone (a fresh ts would count as a tracked-file change and
+# fail the checkpoint driver's validate-only rule). A drift in shards/bytes
+# rewrites the receipt, which correctly surfaces as a tracked change.
+try:
+    old = json.load(open(path))
+    if (old.get("status") == status == "pass"
+            and old.get("data", {}).get("shards") == int(shards)
+            and old.get("data", {}).get("bytes") == int(bytes_)):
+        sys.exit(0)
+except (OSError, ValueError):
+    pass
 json.dump({"step": "weights-" + __import__("socket").gethostname(),
            "status": status, "ts": time.strftime("%FT%T"),
            "data": {"shards": int(shards), "bytes": int(bytes_)}},
