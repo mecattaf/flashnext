@@ -1,0 +1,1 @@
+{"schemaVersion":2,"unit":"tally-job-01a04d16-0688-71b3-9092-46b77b475caf.service","invocationId":"8d6932b67f794ad888abbe08a323ae37","attempt":1,"leaseEpoch":59,"serviceResult":"success","exitCode":"exited","exitStatus":"0","accounting":{"cpuUsageNsec":190987000,"execMainStartMonotonicUsec":39493612565,"execMainExitMonotonicUsec":39495633020,"memoryPeakBytes":28200960}}

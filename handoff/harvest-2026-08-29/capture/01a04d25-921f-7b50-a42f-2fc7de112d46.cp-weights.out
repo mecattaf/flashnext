@@ -1,0 +1,11 @@
+== coordinator ==
+stage-weights: /mnt/nas/models/weights/qwen38-flash-next-fp8 -> /var/lib/local-models/flashnext-fp8 (131 shards visible at source)
+              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=292/438)              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=291/438)              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=288/438)              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=0/438)  
+stage-weights: pass (131 shards, 185563854698 bytes)
+== worker ==
+stage-weights: /mnt/library/weights/qwen38-flash-next-fp8 -> /var/lib/local-models/flashnext-fp8 (131 shards visible at source)
+              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=292/438)              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=291/438)              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=288/438)              0   0%    0.00kB/s    0:00:00 (xfr#0, to-chk=0/438)  
+stage-weights: pass (131 shards, 185563854698 bytes)
+coordinator: 131 shards, 185563854698 bytes
+worker: 131 shards, 185563854698 bytes
+both nodes staged

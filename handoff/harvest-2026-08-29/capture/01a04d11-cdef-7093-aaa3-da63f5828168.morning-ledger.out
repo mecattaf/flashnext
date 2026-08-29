@@ -1,0 +1,1 @@
+TALLY_FINAL_MESSAGE={"attempt":1,"blocked":false,"comment":"local://campaign/flashnext/attempt-receipts/5","exhausted":false,"kind":"retry","posted":true,"redacted":false,"retry":null,"taskId":"morning-ledger","verdict":"transient"}
