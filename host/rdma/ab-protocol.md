@@ -40,6 +40,33 @@ about this pair's own measured record narrow how much of it to expect here:
    rail on average latency. Go in expecting a real but small number, not a
    repeat of +3.4%.
 
+## XDomain wedge discipline -- hard rules before any verbs traffic
+
+Adopted 2026-08-29 from the strix-rdma recon (post-reboot chapter record,
+`~/post-reboot-latest-2.md` §4): RDMA DMA TX toward a peer whose RX ring is
+not open does not error out -- it stalls on zero end-to-end credits and can
+wedge the entire XDomain, **including TCP on the same cable**. Recovery is
+reboot-only. Therefore, whenever the verbs arm is live:
+
+1. **Out-of-band TCP barrier before first RDMA transmit.** Both sides
+   confirm, over the ethernet wire (`enp191s0`, never the rail itself), that
+   the peer's RX ring is open before either side sends its first RDMA
+   packet. No barrier, no transmit.
+2. **Never take both sides' rings down simultaneously.** One side stays up
+   until the other is confirmed down and quiescent.
+3. **Worker-first teardown.** The worker's rings come down first; the
+   coordinator follows only after confirming the worker is quiesced -- the
+   mirror image of the worker-first reboot rule in `attended-bringup.md`.
+
+**Exact-name hazard (verified in-source, `kernel/ibdev.c:2277-2290`):** both
+ibverbs devices advertise rail 0's GID -- the driver registers one global
+`roce_netdev` for every rail, so `usb4_rdma5`'s GID table looks identical to
+`usb4_rdma0`'s. `NCCL_IB_HCA` must therefore be the **exact string**
+`usb4_rdma0` -- a prefix match (`usb4_rdma`) or selecting `usb4_rdma5`
+silently routes RDMA onto the wrong wire with no error. Both devices existing
+on both nodes is by design (fixed-stride naming, one lane per TB domain);
+their presence is not the hazard -- ambiguous selection is.
+
 ## Protocol
 
 - **Depths:** reuse the main bench's depth series -- `0`, `10240`, `102400`

@@ -335,8 +335,23 @@ D=$(ls /sys/class/infiniband/ | head -1)
 
 ## 9. Verify gate -- must pass on BOTH nodes before any benchmark
 
+> **SUPERSEDED IN PART (2026-08-29, post-reboot chapter record):** the
+> "usb4_rdma0 ONLY" contract below guarded a source-blind control-handler
+> bug that the source-aware build (hellas-ai/thunderbolt-ibverbs @ 76ba39b)
+> fixes. On this build, **`usb4_rdma0` AND `usb4_rdma5` both present on both
+> nodes is the correct, verified state**: `usb4_rdma5`'s name is deliberate
+> fixed-stride naming (stride 5 per TB domain, so both nodes compute
+> identical names for the same physical lane -- do NOT rename), and the
+> boot-time `-12` probe error on the second advertised lane per cable is
+> permanent and cosmetic (the NHI has exactly 3 DMA rings per controller:
+> control + net + ONE RDMA lane; the second native lane can never allocate).
+> What still holds: everything runs on `usb4_rdma0` (domain0, c4:00.5), and
+> `NCCL_IB_HCA` must be that **exact** string -- both devices advertise rail
+> 0's GID, so a prefix match or `usb4_rdma5` silently routes onto the wrong
+> wire (see `ab-protocol.md`, XDomain wedge discipline).
+
 ```
-ls /sys/class/infiniband/                              # -> usb4_rdma0, and ONLY usb4_rdma0
+ls /sys/class/infiniband/                              # -> usb4_rdma0 (usb4_rdma5 beside it is expected -- see note above)
 rdma link                                               # port state ACTIVE, PHYS_STATE LinkUp
 cat /sys/class/infiniband/usb4_rdma0/ports/1/gids/1     # non-zero (RoCEv2 IPv4 GID)
 ibv_devices                                             # lists usb4_rdma0
@@ -360,9 +375,13 @@ control handler on either box cross-matches the other's HELLOs and poisons
 its HopID state -- a corruption bug, not a slowdown, and needs a full recovery
 to clear.
 
-Confirm rail 1 stays clean, on both nodes:
+Confirm rail 1 stays clean, on both nodes (note: on the source-aware build,
+`usb4_rdma5` also appears in `/sys/class/infiniband/` -- that is expected
+device *registration*, not RDMA brought up on rail 1; see the step 9 note.
+The single-rail contract is about which device carries traffic:
+`usb4_rdma0`, exactly, always):
 ```
-ls /sys/class/infiniband/                 # exactly ONE entry -- usb4_rdma0
+ls /sys/class/infiniband/                 # usb4_rdma0 present; usb4_rdma5 beside it is expected on this build
 readlink -f /sys/class/infiniband/usb4_rdma0/device      # resolve back to c4:00.5 (domain0), NOT c4:00.6 (domain1)
 ip -4 addr show thunderbolt1              # link-local only, unchanged from before this checklist started
 ```
