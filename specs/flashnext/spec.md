@@ -1,6 +1,6 @@
 # flashnext — the vendor FP8 release at tensor-parallel two on the coordinator/worker pair
 
-Status: proposed
+Status: ratified 2026-08-28
 Governs: silent-factory-worklists/flashnext.json
 Consumers: the flashnext worklist readFirst anchors; the S1 boundary sitting; the S3 morning review
 Supersedes: none
