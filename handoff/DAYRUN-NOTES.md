@@ -49,6 +49,54 @@ compiles/profiles), so the pin alone would not have dodged this.
 Morning note: vision serving on gfx1151 is blocked on a chunked/flash ViT
 attention path — README/handoff item, not a tonight patch.
 
+
+## PRE-ARMED: cp-tp2 will fail at serve start — two known defects in merged fn-cluster-up.sh
+
+Verified against the host-tooling completion ref (merged 09:52, BEFORE the
+vision-OOM diagnosis). The TP=2 `vllm serve` invocation (fn-cluster-up.sh
+step 5) has two latent failures, both loud at engine init:
+
+1. No `--limit-mm-per-prompt` → the big model's vision tower hits the same
+   256 GiB encoder-profiling OOM as the proxy did.
+2. `--enforce-eager` + fn-env.sh's unconditional `VLLM_PLE_MMAP=1` → the
+   fork's check_cudagraph_safety guard REFUSES plain eager with PLE mmap
+   (spec P10: first light must run VLLM_COMPILE + PIECEWISE with the mmap op
+   as a split boundary — exactly the mode the successful proxy boot used).
+
+Recovery when cp-tp2 fails (native ladder: steer owning task host-tooling,
+then resume/poll). Exact patch to deliver, byte-for-byte:
+
+```diff
+--- a/host/fn-cluster-up.sh
++++ b/host/fn-cluster-up.sh
+@@ serve step 5 @@
+   --tensor-parallel-size 2 \
+   --distributed-executor-backend ray \
+-  --enforce-eager \
+   --gpu-memory-utilization $FN_GPU_UTIL \
+   --max-model-len $FN_MAX_CTX \
++  --limit-mm-per-prompt '{"image":0,"video":0}' \
++  --max-num-batched-tokens ${FN_MAX_BATCHED_TOKENS:-2048} \
+   > '$FN_STATE_DIR/serve.log' 2>&1"
+```
+
+(--max-num-batched-tokens 2048: this model has a QSA indexer, budget 2048;
+ds4 precedent says indexer/top-k workspace scales with batch x context —
+they ran 512 at 512K ctx. Start 2048 at 256K, drop to 512 on OOM.)
+
+## TP=2 memory budget (fable deep-dive addendum, config-verified)
+
+Checkpoint 172.8 GiB; engram table ~51.2 GiB stays on NVMe (PLE mmap, 0 GPU
+bytes) → ~121.6 GiB GPU weights → ~61 GiB/rank at TP=2. KV at 256K is tiny
+by architecture (12 of 48 layers full-attn, GQA 2 kv heads → 12 KiB/token/rank
+→ 3 GiB per full 256K seq bf16). GDN state ~54 MiB/seq/rank but PREALLOCATED
+per scheduler slot: default --max-num-seqs 256 would reserve ~14 GiB/rank —
+cap to 32-64 if first light is tight. Budget: 61 weights + 10-13 KV pool +
+~4 activations + ~4 runtime ≈ 80 GiB/rank = the residency bound; the spare
+~40 GiB/node is page cache for the mmap'd table BY DESIGN. Optional after a
+good first light: pin --kv-cache-memory-bytes 12884901888 (12 GiB ≈ 4
+concurrent 256K streams; --kv-cache-dtype fp8 doubles that) ds4-style.
+
 ## Steer ledger (this campaign)
 
 | seq | task | gist |
