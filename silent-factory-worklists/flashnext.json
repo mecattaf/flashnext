@@ -6,42 +6,85 @@
     "maxParallel": 1,
     "steward": "narrator",
     "agent": {
-      "adapter": "pi",
+      "adapter": "claude-code",
       "approvalPolicy": null,
       "sandboxPolicy": null,
       "diagnosisSandboxPolicy": null,
-      "runtimeMaxSec": 14400
+      "runtimeMaxSec": 14400,
+      "model": "opus"
     },
     "gates": [
       {
         "kind": "command",
         "id": "repo-tests",
-        "preflightArgv": ["sh", "-euc", "command -v python3 >/dev/null"],
-        "argv": ["python3", "-m", "unittest", "discover", "-s", "tests"]
+        "preflightArgv": [
+          "sh",
+          "-euc",
+          "command -v python3 >/dev/null"
+        ],
+        "argv": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests"
+        ]
       },
       {
         "kind": "command",
         "id": "spec-lint",
-        "preflightArgv": ["sh", "-euc", "test -d /home/tom/mecattaf/tally.nix"],
-        "argv": ["bash", "-euc", "nix develop /home/tom/mecattaf/tally.nix --command cargo run --manifest-path /home/tom/mecattaf/tally.nix/Cargo.toml -q -p spec-lint -- specs/flashnext --worklist silent-factory-worklists/flashnext.json --root . || [ $? -eq 1 ]"]
+        "preflightArgv": [
+          "sh",
+          "-euc",
+          "test -d /home/tom/mecattaf/tally.nix"
+        ],
+        "argv": [
+          "bash",
+          "-euc",
+          "nix develop /home/tom/mecattaf/tally.nix --command cargo run --manifest-path /home/tom/mecattaf/tally.nix/Cargo.toml -q -p spec-lint -- specs/flashnext --worklist silent-factory-worklists/flashnext.json --root . || [ $? -eq 1 ]"
+        ]
       },
       {
         "kind": "command",
         "id": "flake-eval",
-        "preflightArgv": ["sh", "-euc", "command -v nix >/dev/null"],
-        "argv": ["nix", "flake", "check", "--no-build"]
+        "preflightArgv": [
+          "sh",
+          "-euc",
+          "command -v nix >/dev/null"
+        ],
+        "argv": [
+          "nix",
+          "flake",
+          "check",
+          "--no-build"
+        ]
       },
       {
         "kind": "command",
         "id": "fork-verify",
-        "preflightArgv": ["sh", "-euc", "command -v git >/dev/null"],
-        "argv": ["bash", "scripts/verify-fork.sh"]
+        "preflightArgv": [
+          "sh",
+          "-euc",
+          "command -v git >/dev/null"
+        ],
+        "argv": [
+          "bash",
+          "scripts/verify-fork.sh"
+        ]
       },
       {
         "kind": "command",
         "id": "receipts-verify",
-        "preflightArgv": ["sh", "-euc", "command -v python3 >/dev/null"],
-        "argv": ["python3", "scripts/receipts-verify.py"]
+        "preflightArgv": [
+          "sh",
+          "-euc",
+          "command -v python3 >/dev/null"
+        ],
+        "argv": [
+          "python3",
+          "scripts/receipts-verify.py"
+        ]
       }
     ]
   },
@@ -56,18 +99,31 @@
         "A build receipt the receipts gate can grade"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r3", "IMPORTS.md", "specs/flashnext/evidence/kyuz0-rocm10.md"],
-        "styleReferences": ["scripts/run-smoke.sh"]
+        "specSections": [
+          "specs/flashnext/spec.md#r3",
+          "IMPORTS.md",
+          "specs/flashnext/evidence/kyuz0-rocm10.md"
+        ],
+        "styleReferences": [
+          "scripts/run-smoke.sh"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "recipe-pins",
           "description": "The recipe pins the exact wheel set, the fork branch, and the image tag, and is syntax-clean.",
-          "argv": ["bash", "-euc", "bash -n container/build.sh && grep -q 'torch==2.13.0+rocm7.14.0' container/Containerfile && grep -q 'repo.amd.com/rocm/whl-multi-arch' container/Containerfile && grep -q 'mecattaf/vllm' container/Containerfile && grep -q 'flashnext:dev' container/build.sh && grep -qi 'MIT' container/Containerfile"]
+          "argv": [
+            "bash",
+            "-euc",
+            "bash -n container/build.sh && grep -q 'torch==2.13.0+rocm7.14.0' container/Containerfile && grep -q 'repo.amd.com/rocm/whl-multi-arch' container/Containerfile && grep -q 'mecattaf/vllm' container/Containerfile && grep -q 'flashnext:dev' container/build.sh && grep -qi 'MIT' container/Containerfile"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["container", "results/receipts"]
+      "conflictDomains": [
+        "container",
+        "results/receipts"
+      ]
     },
     {
       "id": "instruments",
@@ -79,18 +135,30 @@
         "Notice headers travel with every adapted module"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/evidence/ds4-vllm-manifest.md", "specs/flashnext/evidence/qsa-53896.md"],
-        "styleReferences": ["scripts/receipts-verify.py"]
+        "specSections": [
+          "specs/flashnext/evidence/ds4-vllm-manifest.md",
+          "specs/flashnext/evidence/qsa-53896.md"
+        ],
+        "styleReferences": [
+          "scripts/receipts-verify.py"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "instruments-compile-with-notices",
           "description": "All three modules compile, carry notices, and their tests pass.",
-          "argv": ["bash", "-euc", "python3 -m py_compile container/rootfs/fn_synctrace.py container/rootfs/fn_offload_batch.py container/rootfs/fn_expert_union.py && grep -l 'Adapted from' container/rootfs/fn_*.py | wc -l | grep -qx 3 && python3 -m unittest tests.test_instruments -v"]
+          "argv": [
+            "bash",
+            "-euc",
+            "python3 -m py_compile container/rootfs/fn_synctrace.py container/rootfs/fn_offload_batch.py container/rootfs/fn_expert_union.py && grep -l 'Adapted from' container/rootfs/fn_*.py | wc -l | grep -qx 3 && python3 -m unittest tests.test_instruments -v"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["container/rootfs", "tests"]
+      "conflictDomains": [
+        "container/rootfs",
+        "tests"
+      ]
     },
     {
       "id": "host-tooling",
@@ -102,18 +170,34 @@
         "First light produces the four receipts the ladder grades"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r4", "specs/flashnext/spec.md#r6", "specs/flashnext/evidence/ds4-vllm-manifest.md", "specs/flashnext/evidence/dotfiles-observed.md"],
-        "styleReferences": ["scripts/stage-weights.sh", "scripts/run-smoke.sh"]
+        "specSections": [
+          "specs/flashnext/spec.md#r4",
+          "specs/flashnext/spec.md#r6",
+          "specs/flashnext/evidence/ds4-vllm-manifest.md",
+          "specs/flashnext/evidence/dotfiles-observed.md"
+        ],
+        "styleReferences": [
+          "scripts/stage-weights.sh",
+          "scripts/run-smoke.sh"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "host-doctrine",
           "description": "Env doctrine present, units teardown-safe, all scripts syntax-clean, host tests pass.",
-          "argv": ["bash", "-euc", "for f in host/*.sh scripts/run-tp2.sh; do bash -n \"$f\"; done && grep -q 'PYTHONHASHSEED=0' host/fn-env.sh && grep -q 'NCCL_SOCKET_IFNAME' host/fn-env.sh && grep -q 'thunderbolt0' host/fn-env.sh && grep -q 'NCCL_IB_DISABLE=1' host/fn-env.sh && grep -q 'VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY=FN_' host/fn-env.sh && grep -q 'ExecStopPost' host/systemd/flashnext-pair.service && ! grep -q 'WantedBy' host/systemd/flashnext-pair.service && python3 -m unittest tests.test_host_tooling -v"]
+          "argv": [
+            "bash",
+            "-euc",
+            "for f in host/*.sh scripts/run-tp2.sh; do bash -n \"$f\"; done && grep -q 'PYTHONHASHSEED=0' host/fn-env.sh && grep -q 'NCCL_SOCKET_IFNAME' host/fn-env.sh && grep -q 'thunderbolt0' host/fn-env.sh && grep -q 'NCCL_IB_DISABLE=1' host/fn-env.sh && grep -q 'VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY=FN_' host/fn-env.sh && grep -q 'ExecStopPost' host/systemd/flashnext-pair.service && ! grep -q 'WantedBy' host/systemd/flashnext-pair.service && python3 -m unittest tests.test_host_tooling -v"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["host", "scripts/run-tp2.sh", "tests"]
+      "conflictDomains": [
+        "host",
+        "scripts/run-tp2.sh",
+        "tests"
+      ]
     },
     {
       "id": "bench-harness",
@@ -125,18 +209,30 @@
         "A matrix whose every number carries its protocol"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r6", "specs/flashnext/evidence/nix-strix-halo.md"],
-        "styleReferences": ["scripts/receipts-verify.py"]
+        "specSections": [
+          "specs/flashnext/spec.md#r6",
+          "specs/flashnext/evidence/nix-strix-halo.md"
+        ],
+        "styleReferences": [
+          "scripts/receipts-verify.py"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "bench-honest-client",
           "description": "Client compiles, separation test passes, matrix script is syntax-clean.",
-          "argv": ["bash", "-euc", "python3 -m py_compile bench/fn-stream-client.py && bash -n bench/run-matrix.sh && python3 -m unittest tests.test_bench_client -v"]
+          "argv": [
+            "bash",
+            "-euc",
+            "python3 -m py_compile bench/fn-stream-client.py && bash -n bench/run-matrix.sh && python3 -m unittest tests.test_bench_client -v"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["bench", "tests"]
+      "conflictDomains": [
+        "bench",
+        "tests"
+      ]
     },
     {
       "id": "proxy-tooling",
@@ -147,18 +243,32 @@
         "The admitted kernel path and the ported table path execute on this GPU before any real weight byte is loaded"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r4", "specs/flashnext/evidence/ple-54129.md", "specs/flashnext/evidence/moe-dispatch.md"],
-        "styleReferences": ["scripts/run-smoke.sh"]
+        "specSections": [
+          "specs/flashnext/spec.md#r4",
+          "specs/flashnext/evidence/ple-54129.md",
+          "specs/flashnext/evidence/moe-dispatch.md"
+        ],
+        "styleReferences": [
+          "scripts/run-smoke.sh"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "proxy-scripts-clean",
           "description": "Both scripts are syntax-clean and reference the receipt path.",
-          "argv": ["bash", "-euc", "bash -n scripts/make-proxy.sh scripts/run-proxy.sh && grep -q 'results/receipts/proxy.json' scripts/run-proxy.sh"]
+          "argv": [
+            "bash",
+            "-euc",
+            "bash -n scripts/make-proxy.sh scripts/run-proxy.sh && grep -q 'results/receipts/proxy.json' scripts/run-proxy.sh"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["scripts/make-proxy.sh", "scripts/run-proxy.sh", "tests"]
+      "conflictDomains": [
+        "scripts/make-proxy.sh",
+        "scripts/run-proxy.sh",
+        "tests"
+      ]
     },
     {
       "id": "morning-ledger",
@@ -170,18 +280,33 @@
         "The community post is ready to publish with the benchmark numbers"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r6", "specs/flashnext/spec.md#r7", "IMPORTS.md"],
-        "styleReferences": ["README.md"]
+        "specSections": [
+          "specs/flashnext/spec.md#r6",
+          "specs/flashnext/spec.md#r7",
+          "IMPORTS.md"
+        ],
+        "styleReferences": [
+          "README.md"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "ledger-sections",
           "description": "The ledger carries its five sections and the announcement draft exists.",
-          "argv": ["bash", "-euc", "grep -q 'Receipt review' docs/MORNING.md && grep -q 'Open items' docs/MORNING.md && grep -q 'Promotion checklist' docs/MORNING.md && grep -q 'Optimization menu' docs/MORNING.md && grep -qi 'blocker' docs/MORNING.md && test -s docs/ANNOUNCE.md"]
+          "argv": [
+            "bash",
+            "-euc",
+            "grep -q 'Receipt review' docs/MORNING.md && grep -q 'Open items' docs/MORNING.md && grep -q 'Promotion checklist' docs/MORNING.md && grep -q 'Optimization menu' docs/MORNING.md && grep -qi 'blocker' docs/MORNING.md && test -s docs/ANNOUNCE.md"
+          ]
         }
       ],
-      "dependencies": ["host-tooling", "bench-harness"],
-      "conflictDomains": ["docs"]
+      "dependencies": [
+        "host-tooling",
+        "bench-harness"
+      ],
+      "conflictDomains": [
+        "docs"
+      ]
     },
     {
       "id": "catalog-handoff",
@@ -192,18 +317,29 @@
         "The morning catalog declaration is one git apply plus one review, not authoring work"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r5", "specs/flashnext/evidence/dotfiles-observed.md"],
-        "styleReferences": ["THIRD_PARTY_NOTICES.md"]
+        "specSections": [
+          "specs/flashnext/spec.md#r5",
+          "specs/flashnext/evidence/dotfiles-observed.md"
+        ],
+        "styleReferences": [
+          "THIRD_PARTY_NOTICES.md"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "catalog-patch-wellformed",
           "description": "The patch parses as a git patch and the handoff note exists.",
-          "argv": ["bash", "-euc", "git apply --stat handoff/catalog-row.patch >/dev/null && test -s handoff/README.md"]
+          "argv": [
+            "bash",
+            "-euc",
+            "git apply --stat handoff/catalog-row.patch >/dev/null && test -s handoff/README.md"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["handoff"]
+      "conflictDomains": [
+        "handoff"
+      ]
     },
     {
       "id": "rdma-package",
@@ -215,24 +351,39 @@
         "No unsigned module can load unattended from anything this repo ships"
       ],
       "readFirst": {
-        "specSections": ["specs/flashnext/spec.md#r6", "specs/flashnext/evidence/ds4-vllm-manifest.md"],
-        "styleReferences": ["scripts/stage-weights.sh"]
+        "specSections": [
+          "specs/flashnext/spec.md#r6",
+          "specs/flashnext/evidence/ds4-vllm-manifest.md"
+        ],
+        "styleReferences": [
+          "scripts/stage-weights.sh"
+        ]
       },
       "acceptanceCriteria": [
         {
           "id": "rdma-package-sound",
           "description": "Scripts syntax-clean, pins present, no auto-install, attended language present.",
-          "argv": ["bash", "-euc", "bash -n host/rdma/fetch-and-build.sh && grep -q '503c5ae1e72aa9ed91925dafa3d82ee2e992747f' host/rdma/fetch-and-build.sh && grep -q '76ba39b630a70accb72f19388eefe48844b50eb8' host/rdma/fetch-and-build.sh && ! grep -qE '^[[:space:]]*(sudo[[:space:]]+)?(insmod|modprobe)[[:space:]]' host/rdma/fetch-and-build.sh && grep -qi 'physically present' host/rdma/attended-bringup.md && grep -qi 'worker first' host/rdma/attended-bringup.md && grep -qi 'deploy' host/rdma/attended-bringup.md && test -s host/rdma/ab-protocol.md"]
+          "argv": [
+            "bash",
+            "-euc",
+            "bash -n host/rdma/fetch-and-build.sh && grep -q '503c5ae1e72aa9ed91925dafa3d82ee2e992747f' host/rdma/fetch-and-build.sh && grep -q '76ba39b630a70accb72f19388eefe48844b50eb8' host/rdma/fetch-and-build.sh && ! grep -qE '^[[:space:]]*(sudo[[:space:]]+)?(insmod|modprobe)[[:space:]]' host/rdma/fetch-and-build.sh && grep -qi 'physically present' host/rdma/attended-bringup.md && grep -qi 'worker first' host/rdma/attended-bringup.md && grep -qi 'deploy' host/rdma/attended-bringup.md && test -s host/rdma/ab-protocol.md"
+          ]
         }
       ],
       "dependencies": [],
-      "conflictDomains": ["host/rdma", "tests"]
+      "conflictDomains": [
+        "host/rdma",
+        "tests"
+      ]
     },
     {
       "id": "cp-weights",
       "kind": "checkpoint",
       "title": "Checkpoint: stage the workload checkpoint onto both nodes",
-      "argv": ["bash", "scripts/stage-weights-both.sh"],
+      "argv": [
+        "bash",
+        "scripts/stage-weights-both.sh"
+      ],
       "runtimeMaxSec": 10800,
       "dependencies": []
     },
@@ -240,49 +391,88 @@
       "id": "cp-build",
       "kind": "checkpoint",
       "title": "Checkpoint: the container engine build",
-      "argv": ["bash", "container/build.sh"],
+      "argv": [
+        "bash",
+        "container/build.sh"
+      ],
       "runtimeMaxSec": 14400,
-      "dependencies": ["container-recipe", "instruments"]
+      "dependencies": [
+        "container-recipe",
+        "instruments"
+      ]
     },
     {
       "id": "cp-smoke",
       "kind": "checkpoint",
       "title": "Checkpoint: in-container smoke — identity, fp8 cast, admission",
-      "argv": ["bash", "scripts/run-smoke.sh"],
+      "argv": [
+        "bash",
+        "scripts/run-smoke.sh"
+      ],
       "runtimeMaxSec": 1800,
-      "dependencies": ["cp-build"]
+      "dependencies": [
+        "cp-build"
+      ]
     },
     {
       "id": "cp-proxy",
       "kind": "checkpoint",
       "title": "Checkpoint: proxy checkpoint first light, single node",
-      "argv": ["bash", "-euc", "bash scripts/make-proxy.sh && bash scripts/run-proxy.sh"],
+      "argv": [
+        "bash",
+        "-euc",
+        "bash scripts/make-proxy.sh && bash scripts/run-proxy.sh"
+      ],
       "runtimeMaxSec": 3600,
-      "dependencies": ["cp-smoke", "proxy-tooling"]
+      "dependencies": [
+        "cp-smoke",
+        "proxy-tooling"
+      ]
     },
     {
       "id": "cp-tp2",
       "kind": "checkpoint",
       "title": "Checkpoint: pair first light, residency, fidelity, full context",
-      "argv": ["bash", "scripts/run-tp2.sh"],
+      "argv": [
+        "bash",
+        "scripts/run-tp2.sh"
+      ],
       "runtimeMaxSec": 10800,
-      "dependencies": ["cp-proxy", "cp-weights", "host-tooling"]
+      "dependencies": [
+        "cp-proxy",
+        "cp-weights",
+        "host-tooling"
+      ]
     },
     {
       "id": "cp-bench",
       "kind": "checkpoint",
       "title": "Checkpoint: the counterbalanced bench matrix",
-      "argv": ["bash", "bench/run-matrix.sh"],
+      "argv": [
+        "bash",
+        "bench/run-matrix.sh"
+      ],
       "runtimeMaxSec": 14400,
-      "dependencies": ["cp-tp2", "bench-harness"]
+      "dependencies": [
+        "cp-tp2",
+        "bench-harness"
+      ]
     },
     {
       "id": "cp-close",
       "kind": "checkpoint",
       "title": "Checkpoint: full verification pass over everything the night produced",
-      "argv": ["bash", "-euc", "python3 -m unittest discover -s tests && python3 scripts/receipts-verify.py && FN_FORK_STRICT=1 bash scripts/verify-fork.sh"],
+      "argv": [
+        "bash",
+        "-euc",
+        "python3 -m unittest discover -s tests && python3 scripts/receipts-verify.py && FN_FORK_STRICT=1 bash scripts/verify-fork.sh"
+      ],
       "runtimeMaxSec": 3600,
-      "dependencies": ["cp-bench", "morning-ledger", "catalog-handoff"]
+      "dependencies": [
+        "cp-bench",
+        "morning-ledger",
+        "catalog-handoff"
+      ]
     }
   ]
 }
