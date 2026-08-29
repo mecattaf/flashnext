@@ -16,6 +16,13 @@ defects found *through* tally are noted here too when they shaped the run.
   under this lease" and the container-recipe pi process was verifiably
   running. Corroborate with `pgrep -af pi` / capture files before concluding
   nothing ran.
+- 09:15 — **tally.nix#620 filed**: `campaign poll --once` reports
+  "readmitted" with fresh digests when origin/main moves, but the executing
+  graph keeps arm-time gate argv and base rev — two lane attempts burned on
+  the pre-fix spec-lint gate. Recovery that worked: full re-arm (armSerial 3,
+  new payloadHash, same registration → steers preserved) + `queue cancel` of
+  the stale arm-2 flow pass. Secondary in the same issue: cancel's
+  `ok:true, affected:0, was:running` receipt is ambiguous.
 - doc drift (minor, watch): ROUTING.md's escalation ladder names
   `tally campaign resume <master-issue-url>` — no `resume` verb exists under
   `tally campaign` on the deployed pin (6f1ce03); recovery verbs are
