@@ -26,8 +26,13 @@ class RepoInvariants(unittest.TestCase):
             if path.is_dir() or ".git" in path.parts \
                     or "__pycache__" in path.parts:
                 continue
-            # Evidence dossiers may QUOTE license headers they inspected.
+            # Evidence dossiers may QUOTE license headers they inspected, and
+            # harvest archives are verbatim captured agent streams — both are
+            # records of what was seen, not tree content. The secret-material
+            # scan below still covers them.
             if "evidence" in path.parts or path.name == "test_repo_invariants.py":
+                continue
+            if any(part.startswith("harvest-") for part in path.parts):
                 continue
             if path.suffix in {".safetensors", ".gguf"}:
                 continue
