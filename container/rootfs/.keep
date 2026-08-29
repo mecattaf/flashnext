@@ -1,0 +1,3 @@
+# Marker: the instruments task lands fn_synctrace.py, fn_offload_batch.py and
+# fn_expert_union.py here; container/build.sh ensures this directory exists
+# so the Containerfile's COPY of the overlay is well-formed either way.

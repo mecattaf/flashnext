@@ -1,0 +1,147 @@
+# flashnext:dev — the engine fork built from source at the exactly pinned wheel set
+# ============================================================================
+#
+# Recipe shape adapted from kyuz0/amd-strix-halo-vllm-toolboxes,
+# `Dockerfile.ubuntu-repoamd` @ 23cb726, credited per THIRD_PARTY_NOTICES.md.
+# That recipe is MIT licensed; the notice is retained here as required:
+#
+#   MIT License — Copyright (c) kyuz0 (amd-strix-halo-vllm-toolboxes)
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a
+#   copy of this software and associated documentation files (the "Software"),
+#   to deal in the Software without restriction, including without limitation
+#   the rights to use, copy, modify, merge, publish, distribute, sublicense,
+#   and/or sell copies of the Software, and to permit persons to whom the
+#   Software is furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in
+#   all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+#   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+#   DEALINGS IN THE SOFTWARE.
+#
+# What changed vs the donor recipe (per IMPORTS.md sections 1 and 2):
+#   - torch is pinned to the fork's exact pin 2.13.0+rocm7.14.0 from the AMD
+#     stable multi-arch index (the index tops out there; no ROCm 10 wheels
+#     exist for gfx1151 — specs/flashnext/evidence/kyuz0-rocm10.md).
+#   - torchaudio is OMITTED; we drop the audio extra rather than downgrade
+#     torch to 2.11 (torchaudio capped kyuz0's auto-resolved set there).
+#   - the engine is the flashnext fork (mecattaf/vllm, branch flashnext),
+#     built from source for gfx1151, not a stock vLLM ref.
+#   - designed for overnight iteration: bind-mount a fork checkout over
+#     /opt/vllm and a host dir over /root/.ccache (see container/build.sh);
+#     the editable install then recompiles only what a one-line patch touched.
+#
+# Wheel provenance: the torch/triton/vision/rocm-sdk substrate comes ONLY
+# from the vendor stable index (spec F.11). Generic Python build tooling
+# (setuptools, wheel, packaging, setuptools-scm) and vLLM's upstream runtime
+# dependencies resolve from PyPI as upstream vLLM does; none of those is part
+# of the pinned substrate.
+
+FROM docker.io/ubuntu:24.04
+
+ARG ROCM_WHL=https://repo.amd.com/rocm/whl-multi-arch/
+# The exactly pinned wheel set (IMPORTS.md section 1). The triton pin is the
+# wheel accompanying the torch 2.13.0 set on the vendor stable index —
+# verified by pip's own resolver: torch 2.13.0+rocm7.14.0 depends on exactly
+# triton==3.8.0+git4cff872c.rocm7.14.0 (anything else is ResolutionImpossible).
+# < 3.8 awareness (IMPORTS.md): the fork's fp8-upcast gate keys on triton < 3.8,
+# so on this wheel the admission stands but the in-kernel upcast is bypassed —
+# fp8 dots ride triton 3.8's own lowering, and the fidelity checkpoint grades it.
+ARG TORCH_PIN="torch==2.13.0+rocm7.14.0"
+ARG TORCHVISION_PIN="torchvision==0.28.0+rocm7.14.0"
+ARG TRITON_PIN="triton==3.8.0+git4cff872c.rocm7.14.0"
+# The from-source engine build needs the HIP compiler + cmake packages, which
+# the runtime wheels do not pull in; devel files merge into _rocm_sdk_core.
+ARG ROCM_DEVEL_PIN="rocm-sdk-devel==7.14.0"
+# The generic torch/torchvision wheels carry no device kernels; gfx1151 kernel
+# images ship as separate device packages (torch loads them from torch/.kpack/).
+# Without these the first kernel launch dies with hipErrorInvalidImage.
+ARG DEVICE_PINS="amd-torch-device-gfx1151==2.13.0+rocm7.14.0 amd-torchvision-device-gfx1151==0.28.0+rocm7.14.0 rocm-sdk-device-gfx1151==7.14.0"
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv python3.12-dev \
+        git ca-certificates curl \
+        build-essential cmake ninja-build ccache \
+        cargo rustc libnuma-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 3.12 venv at /opt/venv (pip arrives via ensurepip — no external fetch).
+RUN python3.12 -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
+    PIP_NO_CACHE_DIR=0 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    CCACHE_DIR=/root/.ccache \
+    HOME=/root
+
+# Python build tooling (setuptools is served by the vendor index itself; the
+# rest is generic build-time tooling, not substrate).
+RUN pip install --index-url ${ROCM_WHL} --extra-index-url https://pypi.org/simple \
+        setuptools wheel packaging "setuptools-scm>=8.0" setuptools-rust
+
+# ---- the pinned wheel substrate (vendor stable index only, spec F.11) ----
+RUN pip install --index-url ${ROCM_WHL} \
+        ${TORCH_PIN} ${TORCHVISION_PIN} ${TRITON_PIN} ${ROCM_DEVEL_PIN} ${DEVICE_PINS}
+
+# ---- the engine fork, built from source for gfx1151 ----
+ARG VLLM_REPO=https://github.com/mecattaf/vllm
+ARG VLLM_BRANCH=flashnext
+ENV VLLM_TARGET_DEVICE=rocm \
+    PYTORCH_ROCM_ARCH=gfx1151
+
+# If a host fork checkout is bind-mounted over /opt/vllm (build.sh -v), keep
+# it — that is the incremental-iteration path. Otherwise clone the baseline.
+RUN if [ ! -d /opt/vllm/.git ]; then \
+        git clone --depth 1 --branch flashnext https://github.com/mecattaf/vllm /opt/vllm; \
+    fi \
+    && git -C /opt/vllm rev-parse HEAD > /opt/flashnext-fork-commit \
+    && git -C /opt/vllm rev-parse --abbrev-ref HEAD >> /opt/flashnext-fork-commit
+
+# Editable, no build isolation: the build links against the venv's pinned
+# torch and never resolves build-system.requires (the fork's torch==2.11.0
+# build-system pin is therefore irrelevant here — IMPORTS.md section 1).
+# Build artifacts land inside /opt/vllm, so a bind-mounted checkout keeps
+# them across rebuilds and ccache (on PATH, auto-detected by vLLM's cmake)
+# recompiles only what changed.
+RUN pip install -e /opt/vllm --no-build-isolation
+
+# ---- the fn_ instrument overlay ----
+# Lands the instrument modules importable at the top level of site-packages.
+COPY container/rootfs/ /opt/venv/lib/python3.12/site-packages/
+
+# ---- build identity ----
+RUN mkdir -p /opt/flashnext && python3 - <<'PY'
+import json, time, importlib.metadata as md
+def ver(name):
+    try:
+        return md.version(name)
+    except md.PackageNotFoundError:
+        return "unknown"
+lines = open("/opt/flashnext-fork-commit").read().splitlines()
+info = {
+    "lane": "container",
+    "image": "flashnext:dev",
+    "fork_repo": "https://github.com/mecattaf/vllm",
+    "fork_commit": lines[0],
+    "fork_branch": lines[1] if len(lines) > 1 else "flashnext",
+    "torch": md.version("torch"),
+    "torchvision": md.version("torchvision"),
+    "triton": md.version("triton"),
+    "rocm_sdk_core": ver("rocm-sdk-core"),
+    "amd_torch_device_gfx1151": ver("amd-torch-device-gfx1151"),
+    "gpu_target": "gfx1151",
+    "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+}
+json.dump(info, open("/opt/flashnext/build-info.json", "w"), indent=1)
+PY
+RUN cat /opt/flashnext/build-info.json
+
+WORKDIR /opt/vllm
+CMD ["bash"]
