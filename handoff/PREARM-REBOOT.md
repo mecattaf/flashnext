@@ -133,3 +133,38 @@ morning-lane problem, NOT an arm blocker (sockets are the transport).
 If rail-0 IP stays dead with both patched: flag-file rollback, both nodes,
 worker first — and that IS an arm consideration (rails carry TP=2 sockets;
 the pair env's NCCL_SOCKET_IFNAME lists both TB rails).
+
+---
+
+## Final outcome (2026-08-29 ~02:10)
+
+Chapter record: `~/post-reboot-latest-2.md` (coordinator) — authoritative
+for everything below.
+
+- **Matched set live and verified on both twins.** Coordinator reboot #2
+  (gen 162) delivered the patched set: `thunderbolt` 598016, all ib modules
+  loaded, fn-rdma-modules + fn-rdma-ibverbs clean, 0 failed units on both
+  nodes. **#241 CLOSED.**
+- **Rail soaks clean.** Rail 0 loss-free both directions on repeated 60 s
+  soaks; RTT avg 96–112 µs — above the 63–90 µs earlier reference band,
+  flagged but not blocking (C-state hold 0 both twins, MTU 1500 by design;
+  `fn-preflight.sh`'s latency-hold at serve time is the real gate).
+- **Both RDMA devices present BY DESIGN.** `usb4_rdma0` (domain 0, c4:00.5)
+  AND `usb4_rdma5` (domain 1, c4:00.6) on BOTH nodes, ACTIVE/LINK_UP,
+  MANIFESTs md5-identical. The verify block above's "usb4_rdma0 — and ONLY
+  that" line is superseded: fixed-stride naming from the source-aware build
+  (see `host/rdma/attended-bringup.md` step 9 note). The boot-time `-12`
+  probe error on the second advertised lane is permanent and cosmetic.
+- **The coordinator reboot hang is root-caused**: amdgpu ISM/SSO `dc_lock`
+  ABBA deadlock in the display shutdown path — `dm_suspend()` holds
+  `dc_lock` while sync-flushing ISM/SSO delayed work that itself takes
+  `dc_lock`. Known upstream bug, fixed in 7.1.6 and 7.2 (NOT 7.1.5).
+  **dotfiles#244** tracks the post-campaign fleet migration; until then all
+  reboots stay attended (coordinator WILL hang at shutdown; power-button
+  recovery is the protocol).
+- **Generation cleanup + GC done pre-arm, both twins** (red-line compliant:
+  before arming, never after): coordinator kept 162+161, ~290 G free;
+  worker kept 55+54, ~342 G free.
+
+State at close: arm-ready. Remaining run order: ratify spec → arm →
+overseer launch (operator-driven).

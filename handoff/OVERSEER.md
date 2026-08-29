@@ -116,8 +116,13 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
    not lock-traced — confirm which lock built it before treating it as the
    warm baseline.
 7c. **RDMA is a morning plan, never an overnight act** (operator ruling:
-   "no unsupervised reboots, period"). The kernel half is entirely unpaid on
-   this fleet (stock 7.1.4, no tbv module, `/sys/class/infiniband/` empty);
+   "no unsupervised reboots, period"). ~~The kernel half is entirely unpaid on
+   this fleet (stock 7.1.4, no tbv module, `/sys/class/infiniband/` empty)~~
+   **STALE — the pre-arm bake landed it** (see `handoff/PREARM-REBOOT.md`
+   final outcome): the patched matched set is live on both twins and ibverbs
+   devices EXIST on both nodes (`usb4_rdma0` + `usb4_rdma5`, both by design)
+   — which is exactly why `NCCL_IB_DISABLE=1` is now unconditional, not
+   conditional on a device appearing. The rest holds:
    the RDMA track may only *start* after a committed TP=2-over-TCP benchmark
    is banked, and its checklist's first step is moving the worker's deploy
    path off the fast rail (deploy-rs dials 10.99.0.2 over Thunderbolt with
@@ -141,9 +146,9 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
 - **Never export a vLLM env default**: `VLLM_USE_DEEP_GEMM`,
   `VLLM_MOE_USE_DEEP_GEMM`, `VLLM_ROCM_USE_AITER*` are read via `is_set()`
   probes — exporting the default *diverts the oracle into a hard raise*.
-- **If an ibverbs device exists on the rails (`ls /sys/class/infiniband/`
-  non-empty — true after the pre-arm bake), the overnight env MUST pin
-  `NCCL_IB_DISABLE=1`.** RCCL autodetects verbs devices; without the pin the
+- **The ibverbs devices DO exist on both nodes (verified post-reboot-#2:
+  `usb4_rdma0` + `usb4_rdma5`, both by design), so the overnight env MUST pin
+  `NCCL_IB_DISABLE=1` — unconditionally.** RCCL autodetects verbs devices; without the pin the
   collective could silently ride the unproven RDMA path overnight. Sockets
   are the transport of record until the attended morning A/B. The host-tooling
   worklist task now *requires* this (its acceptance greps for it) — but
@@ -156,6 +161,11 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
   at ~03:00, a peerless rail 1 in the socket list is the first suspect: drop
   `thunderbolt1`, keep `thunderbolt0`.** Do not add rail 1 back without a
   peer IP on both ends.
+- **Rail 0 RTT observed band (post-reboot-#2, verified): 96–112 µs avg,
+  loss-free** — above the 63–90 µs earlier reference. Flagged, not blocking
+  (C-state hold 0 both twins, MTU 1500 by design); `fn-preflight.sh`'s
+  latency-hold at serve time is the real gate. Do not chase the delta
+  overnight.
 - **`_GCN_ARCH` one-liner first** inside the built engine:
   `python -c "import vllm.platforms.rocm as r; print(r._GCN_ARCH, r.on_cdna(), r.on_rdna4())"`.
 - The oracle failure is **loud and at layer construction** — if a serve
