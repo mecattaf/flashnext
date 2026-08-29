@@ -1,0 +1,9 @@
+{
+ "step": "weights-coordinator",
+ "status": "pass",
+ "ts": "2026-08-29T03:21:44",
+ "data": {
+  "shards": 131,
+  "bytes": 185563801379
+ }
+}
