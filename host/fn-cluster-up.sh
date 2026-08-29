@@ -132,20 +132,35 @@ case "$gpus_total" in
     ;;
 esac
 
-# --- 5. the serve: TP=2, eager -------------------------------------------------
+# --- 5. the serve: TP=2, compiled ---------------------------------------------
 # Do not add comments inside the backslash-continued `vllm serve` command
 # below: a '#' there silently comments out every remaining argument, and
 # `bash -n` still reports the file as valid.
-log "serving $FN_MODEL_DIR as '$FN_SERVED_NAME' at TP=2 (eager)"
+#
+# No --enforce-eager: fn-env.sh's unconditional VLLM_PLE_MMAP=1 + the fork's
+# check_cudagraph_safety guard REFUSE plain eager with PLE mmap — first light
+# must run VLLM_COMPILE + PIECEWISE with the mmap op as a split boundary,
+# the mode the successful proxy boot used (spec P10; DAYRUN-NOTES pre-arm).
+#
+# --limit-mm-per-prompt image/video 0: text-only serve, operator-ratified.
+# The vision encoder profiling pass materializes a 65536² fp32 SDPA matrix
+# (= 256 GiB exactly) on gfx1151 — no flash ViT kernel, math fallback. NOT
+# --skip-mm-profiling: a real image at serve time hits the same wall.
+#
+# --max-num-batched-tokens 2048: QSA indexer workspace scales with
+# batch × context (ds4 precedent: 512 at 512K ctx). Start 2048 at 256K,
+# drop to 512 on OOM.
+log "serving $FN_MODEL_DIR as '$FN_SERVED_NAME' at TP=2 (compiled, text-only)"
 podman exec -d "$FN_CONTAINER" bash -c "exec vllm serve $FN_MODEL_DIR \
   --served-model-name $FN_SERVED_NAME \
   --host 0.0.0.0 \
   --port $FN_PORT \
   --tensor-parallel-size 2 \
   --distributed-executor-backend ray \
-  --enforce-eager \
   --gpu-memory-utilization $FN_GPU_UTIL \
   --max-model-len $FN_MAX_CTX \
+  --limit-mm-per-prompt '{\"image\":0,\"video\":0}' \
+  --max-num-batched-tokens ${FN_MAX_BATCHED_TOKENS:-2048} \
   > '$FN_STATE_DIR/serve.log' 2>&1"
 
 # Wait for reality, not for the target's word (the fleet's library-reachable
