@@ -29,3 +29,9 @@ defects found *through* tally are noted here too when they shaped the run.
   `poll --once` (readmit changed authority) and the `tally queue` family.
   Will file on mecattaf/tally.nix only if a real pardon-the-counters need
   arises and no verb covers it.
+- 13:0x — **tally.nix#622 filed**: two qwen lanes (container-recipe,
+  proxy-tooling) independently exited without committing and burned an
+  attempt each at ownership validation. Brief needs a closing
+  definition-of-done block, and/or the driver should salvage a dirty
+  worktree whose diff passes acceptance instead of discarding it.
+  Workaround: overseer commit-discipline steers (seq 4, 7).
