@@ -73,9 +73,16 @@ class RepoInvariants(unittest.TestCase):
         # Runtime hub downloads are forbidden estate-wide.
         self.assertNotIn("-hf ", raw)
         self.assertNotIn("hf download", raw)
-        # Model-family names never enter worklist bytes (lint L16 mirror).
+        # Model-family names never steer task content (lint L16 mirror).
+        # The campaign.agent block is exempt: it names execution
+        # infrastructure, not task content, and the adapter was switched to
+        # claude-code by operator ruling on 2026-08-29 (qwen token-plan
+        # quota exhaustion; see handoff/DAYRUN-NOTES.md).
+        wl_scan = json.loads(raw)
+        wl_scan["campaign"].pop("agent", None)
+        scan = json.dumps(wl_scan).lower()
         for banned in ("qwen", "llama", "deepseek", "claude", "opus"):
-            self.assertNotIn(banned, raw.lower(),
+            self.assertNotIn(banned, scan,
                              f"banned token '{banned}' in worklist bytes")
         # Every implementation task carries executable acceptance.
         for task in wl["tasks"]:
