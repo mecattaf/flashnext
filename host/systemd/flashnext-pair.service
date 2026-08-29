@@ -1,0 +1,38 @@
+# host/systemd/flashnext-pair.service — the flashnext pair service.
+#
+# One command stands the pair (fn-cluster-up.sh), one command tears it down
+# (fn-cluster-down.sh). Oneshot with RemainAfterExit so the unit reflects
+# "the pair is up" while the serve process runs detached inside its
+# container; failure cannot strand ranks because StopPost tears down even
+# when ExecStart itself failed.
+#
+# Install with `systemctl --user link host/systemd/flashnext-pair.service`
+# from the repository root, then drive explicitly:
+#   systemctl --user start flashnext-pair    # stand the pair
+#   systemctl --user stop  flashnext-pair    # tear the pair down
+#
+# Type=oneshot + RemainAfterExit: ExecStart completes once the served name
+# answers on the API port; the unit stays active while the pair serves.
+# TimeoutStartSec covers a cold-kernel-cache bring-up (~25 min of LLVM plus
+# the weight load).
+[Unit]
+Description=flashnext pair service — TP=2 vendor FP8 release on coordinator+worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=45min
+TimeoutStopSec=5min
+ExecStart=%h/mecattaf/flashnext/host/fn-cluster-up.sh
+ExecStop=%h/mecattaf/flashnext/host/fn-cluster-down.sh
+# ExecStop does not run when ExecStart itself fails; StopPost does, so a
+# failed bring-up still tears the pair down instead of leaving ray daemons
+# and half-up containers behind a 'failed' wrapper. fn-cluster-down.sh is
+# idempotent, so the Stop+StopPost double call is deliberate and safe.
+ExecStopPost=%h/mecattaf/flashnext/host/fn-cluster-down.sh
+
+# Deliberately no install section: the model takes tens of minutes to load
+# and claims both GPUs, so the stack comes up only on an explicit start by
+# the operator or the overnight overseer — never at boot.
