@@ -23,7 +23,7 @@
         "kind": "command",
         "id": "spec-lint",
         "preflightArgv": ["sh", "-euc", "test -d /home/tom/mecattaf/tally.nix"],
-        "argv": ["bash", "-euc", "nix develop /home/tom/mecattaf/tally.nix --command cargo run -q -p spec-lint -- specs/flashnext --worklist silent-factory-worklists/flashnext.json --root . || [ $? -eq 1 ]"]
+        "argv": ["bash", "-euc", "nix develop /home/tom/mecattaf/tally.nix --command cargo run --manifest-path /home/tom/mecattaf/tally.nix/Cargo.toml -q -p spec-lint -- specs/flashnext --worklist silent-factory-worklists/flashnext.json --root . || [ $? -eq 1 ]"]
       },
       {
         "kind": "command",
