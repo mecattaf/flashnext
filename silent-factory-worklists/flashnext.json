@@ -10,8 +10,7 @@
       "approvalPolicy": null,
       "sandboxPolicy": null,
       "diagnosisSandboxPolicy": null,
-      "runtimeMaxSec": 14400,
-      "model": "opus"
+      "runtimeMaxSec": 14400
     },
     "gates": [
       {
