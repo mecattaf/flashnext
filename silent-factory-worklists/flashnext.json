@@ -238,7 +238,7 @@
       "id": "proxy-tooling",
       "kind": "implementation",
       "title": "Proxy checkpoint builder and single-node first-light runner",
-      "goal": "Write scripts/make-proxy.sh and scripts/run-proxy.sh per spec claim 4.1 (specs/flashnext/spec.md#r4). make-proxy.sh runs inside the container and builds a tiny synthetic checkpoint under /var/tmp/flashnext-proxy: the same architecture identifier as the workload, a handful of layers, 8 experts in block-FP8 with weight_block_size 128 by 128, a small lookup table with the shard tensor naming the mmap path expects — reuse the fork's own test scaffolding under tests/models/ inside the fork checkout wherever possible instead of inventing generators. run-proxy.sh serves it single-node from the container with VLLM_PLE_MMAP=1 and eager execution, requests one greedy completion, asserts finite logits via the API, shuts down cleanly, and writes results/receipts/proxy.json. Boundaries: touch only scripts/make-proxy.sh, scripts/run-proxy.sh, and tests/.",
+      "goal": "Re-scope proxy-tooling to authoring and committing the two scripts, and widen its write boundary to include the receipt the scripts produce. Deliverables: (1) scripts/make-proxy.sh, in the style of scripts/run-smoke.sh, runs inside the flashnext:dev container and builds the synthetic checkpoint under /var/tmp/flashnext-proxy — same architecture identifier as the workload, a handful of layers, 8 experts in block-FP8 with weight_block_size 128 by 128, and a small lookup table using the shard tensor name the mmap path expects — reusing the fork's tests/models/ scaffolding inside the fork checkout instead of inventing generators, and detecting an existing checkpoint so a rebuild is skipped. (2) scripts/run-proxy.sh serves that checkpoint single-node from the container with VLLM_PLE_MMAP=1 and eager execution, requests one greedy completion, asserts finite logits via the API, shuts the server down cleanly, and writes results/receipts/proxy.json, recording the serve env choices in the receipt data so cp-proxy and the later TP=2 serve reproduce them. The serve command must carry --limit-mm-per-prompt with image and video set to 0 (JSON quoted for the shell) so profile_run skips the vision-encoder pass that allocated 274877906944 bytes; keep gpu_memory_utilization at 0.6; do not use --skip-mm-profiling; do not set VLLM_ROCM_APU_UNIFIED_MEMORY, since the host logs integrated_gpu=False and that steer was superseded. PYTORCH_HIP_ALLOC_CONF=expandable_segments:True is optional. (3) Any script-level test coverage lives under tests/. Explicitly out of scope for this task: performing the live GPU first light. The scripts must be authored, syntax-clean, and committed on the assigned branch without requiring a serve run; cp-proxy owns executing run-proxy.sh and producing the real results/receipts/proxy.json. Granting results/receipts/proxy.json to the write boundary matches the container-recipe precedent (results/receipts/build.json committed in c1363cb) and makes authorized steering comment 7 executable instead of self-defeating, and it lets a receipt produced by an opportunistic local run be committed rather than dirtying the lane. Final acts, in order: run every acceptance argv and see it pass, git add only paths inside the widened boundary, git commit, then confirm git status --porcelain is empty before returning a final message.",
       "deliveredBehaviors": [
         "The admitted kernel path and the ported table path execute on this GPU before any real weight byte is loaded"
       ],
@@ -261,13 +261,43 @@
             "-euc",
             "bash -n scripts/make-proxy.sh scripts/run-proxy.sh && grep -q 'results/receipts/proxy.json' scripts/run-proxy.sh"
           ]
+        },
+        {
+          "id": "proxy-serve-flags",
+          "description": "run-proxy.sh serves with the mmap PLE path, eager execution, and the text-only multimodal limit that avoids the encoder-profiling OOM.",
+          "argv": [
+            "bash",
+            "-euc",
+            "grep -q 'VLLM_PLE_MMAP=1' scripts/run-proxy.sh && grep -q 'limit-mm-per-prompt' scripts/run-proxy.sh && grep -qE 'enforce.eager|enforce_eager' scripts/run-proxy.sh && ! grep -q 'skip-mm-profiling' scripts/run-proxy.sh"
+          ]
+        },
+        {
+          "id": "proxy-checkpoint-layout",
+          "description": "make-proxy.sh builds the synthetic checkpoint at the agreed path with block-FP8 128x128 experts and reuses the fork's test scaffolding.",
+          "argv": [
+            "bash",
+            "-euc",
+            "grep -q '/var/tmp/flashnext-proxy' scripts/make-proxy.sh && grep -q 'weight_block_size' scripts/make-proxy.sh && grep -q '128' scripts/make-proxy.sh && grep -q 'tests/models' scripts/make-proxy.sh"
+          ]
+        },
+        {
+          "id": "proxy-lane-clean",
+          "description": "The lane is fully committed: no uncommitted or untracked files remain after the task's commit.",
+          "argv": [
+            "bash",
+            "-euc",
+            "[ -z \"$(git status --porcelain)\" ]"
+          ]
         }
       ],
-      "dependencies": [],
+      "dependencies": [
+        "container-recipe"
+      ],
       "conflictDomains": [
         "scripts/make-proxy.sh",
         "scripts/run-proxy.sh",
-        "tests"
+        "tests",
+        "results/receipts/proxy.json"
       ]
     },
     {
