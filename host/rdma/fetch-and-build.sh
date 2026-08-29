@@ -79,7 +79,12 @@ LOCAL_SERIES="
 0009-thunderbolt-xdomain-lane-bonding-module-param.patch
 "
 
-TARGET_KVER="${TARGET_KVER:-7.1.4}"
+# 7.2.0: deliberate pin update 2026-08-29 — the fleet migrated off 7.1.4
+# (dotfiles#244/#248: coordinator shutdown deadlock fixed in 7.2). The
+# 10-file series + module build must be re-proven against 7.2 headers; the
+# staged 7.1.4 artifacts under ~/.local/state/flashnext-rdma/7.1.4 are dead
+# (vermagic) and superseded by this re-bake.
+TARGET_KVER="${TARGET_KVER:-7.2.0}"
 KVER="${1:-$(uname -r)}"
 CACHE_DIR="${FLASHNEXT_RDMA_CACHE:-$HOME/.cache/flashnext-rdma-build}"
 STAGE_DIR="${FLASHNEXT_RDMA_STAGE:-$HOME/.local/state/flashnext-rdma}"
