@@ -36,22 +36,19 @@ tally campaign arm mecattaf/flashnext silent-factory-worklists/flashnext.json
 
 Then immediately post the host-tooling pre-dispatch steer from
 `handoff/ROUTING.md` (the pre-dispatch re-read folds it into the lane's first
-brief), start the container base pull + wheel prefetch, and check the weights
-pre-staging.
+brief) and start the container base pull + wheel prefetch.
 
-State you inherit (2026-08-29 pre-arm session): all five worklist gates green
-(9/9 unit tests, spec-lint, flake check, 12/12 fork verify, receipts verify);
-spec ratified at `a066074`; pi confirmed on qwencloud qwen3.8-max
-(`pi auth check qwen-token-plan` exit 0); rails verified (rail 0 loss-free,
-RTT band 96–112 µs — flagged not blocking). **Weights pre-staging is already
-RUNNING detached** (`scripts/stage-weights-both.sh`, PID 23692, log at
-`/tmp/claude-1000/-home-tom/f523eb64-1b27-4dd8-bcab-dcb521b5e828/scratchpad/prestage.log`,
-~1 h 45 m total, coordinator leg first). **Do not wait for it and do not
-duplicate it**: the staging script is idempotent (rsync fast-paths complete
-files), so let the `cp-weights` checkpoint re-verify and write receipts when
-its turn comes; just glance at the log if `cp-weights` runs long. Its
-receipts under `results/receipts/` will appear as new untracked files —
-expected, not an error.
+State you inherit (2026-08-29 pre-arm session; the run now launches in the
+DAY, unsupervised by the operator — same rules, no reboots, no exceptions):
+all five worklist gates green (9/9 unit tests, spec-lint, flake check, 12/12
+fork verify, receipts verify); spec ratified at `a066074`; pi confirmed on
+qwencloud qwen3.8-max (`pi auth check qwen-token-plan` exit 0); rails
+verified (rail 0 loss-free, RTT band 96–112 µs — flagged not blocking).
+**Weights staging is COMPLETE on both nodes**: 131 shards / 185,563,801,379
+bytes each, verified pass, receipts committed at
+`results/receipts/weights-{coordinator,worker}.json`. The `cp-weights`
+checkpoint will fast-path over the staged copies (the script is idempotent)
+and re-verify — expect it to be quick.
 
 NCCL discipline, doubly load-bearing since the pre-arm bake: ibverbs devices
 now EXIST on both nodes (`usb4_rdma0` + `usb4_rdma5`, both by design), so
