@@ -35,3 +35,11 @@ defects found *through* tally are noted here too when they shaped the run.
   definition-of-done block, and/or the driver should salvage a dirty
   worktree whose diff passes acceptance instead of discarding it.
   Workaround: overseer commit-discipline steers (seq 4, 7).
+- 14:30 — operator-called stop. Full issue set filed: #620 (poll
+  authority + cancel no-op), #621 (stale-pass promotion), #622 (uncommitted
+  ownership pattern), #623 (status render desync), #624 (model-override
+  admission denial), #625 (checkpoint stderr masking), #626 (inbox
+  answer/pardon verbs), #627 (usage aggregation), #628 (steer/retry race +
+  resume-verb docs drift). Stop-state and second-flow inputs:
+  docs/MORNING.md. pi-era usage for the record: 311 calls, ~1.02M fresh
+  input, 24.3M cache reads, 347K output — exhausted the qwen 1-week plan.
