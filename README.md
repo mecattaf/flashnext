@@ -10,9 +10,18 @@ striped across both rails)** and a direct **5 GbE link (the control plane)**.
 
 Being built overnight 2026-08-28 → 2026-08-29, governed by a
 [tally](https://github.com/mecattaf/tally.nix) campaign spec
-([`specs/flashnext/spec.md`](specs/flashnext/spec.md)). Benchmarks land in
-[`results/`](results/) as they are produced. If it dies instead, the blocker
-and drafted upstream issues land in [`handoff/`](handoff/).
+([`specs/flashnext/spec.md`](specs/flashnext/spec.md), ratified). Benchmarks
+land in [`results/`](results/) as they are produced. If it dies instead, the
+blocker and drafted upstream issues land in [`handoff/`](handoff/).
+
+The overnight build itself is compute-routed: every implementation lane of the
+campaign grinds on **qwencloud-hosted qwen3.8-max** via tally's `pi` adapter
+(the model the repo is about, building its own serving stack); a **Claude
+Fable** overseer session steers the armed campaign, and **Opus ultracode
+fleets** are the escalation path when a lane fails twice. Checkpoints run
+model-free as direct subprocesses. The full routing table, the reason no
+per-task routing knob exists, and the exact escalation ladder are in
+[`handoff/ROUTING.md`](handoff/ROUTING.md).
 
 ## Why this needs a repo at all
 
@@ -52,7 +61,7 @@ Four findings from tonight's source sweep (full evidence with file:line pins in
 | Container | Ubuntu 24.04 + stable wheels + fork built from source, recipe after [kyuz0/amd-strix-halo-vllm-toolboxes](https://github.com/kyuz0/amd-strix-halo-vllm-toolboxes) (MIT) | `container/` |
 | Engram | `VLLM_PLE_MMAP=1` — table served from each node's NVMe via mmap page faults, 0 bytes GPU-resident, no per-token collective at the lookup site | fork |
 | MTP | in-checkpoint multi-token prediction (no external drafter), vLLM v1 spec-decode | fork |
-| Transport | RCCL over TCP, both Thunderbolt rails — one TB5-cabled, one TB3-cabled, both trained at 40 Gb/s (PM QoS held both ends: 77 µs avg RTT; an unheld C3 sleep state costs 8.5× latency); 5 GbE = ssh/control. No RDMA in this campaign. | dotfiles |
+| Transport | RCCL over TCP sockets — the transport of record. Rail 0 (`thunderbolt0`, 10.99.0.x/30) carries the tensors; PM QoS held both ends (an unheld C3 sleep state costs 8.5× latency); 5 GbE = ssh/control. ibverbs devices now exist on both nodes from the pre-arm bake, so `NCCL_IB_DISABLE=1` is pinned **unconditionally** — RDMA is the attended morning A/B, never the overnight path. | dotfiles, `host/rdma/` |
 | Packaging | **Podman tonight, Nix at graduation** — you don't nixify a moving target. Tonight's deliverable is a serving measurement, so the engine builds in a container with a bind-mounted, ccache'd build dir (a one-line patch rebuilds incrementally; nix charges a full few-hundred-kernel HIP recompile per edit). Once the patch set is frozen and proven, the repo graduates to NixOS-native — the complete nix wiring, substrate audit, and hazard ledger already ship in [`specs/flashnext/evidence/`](specs/flashnext/evidence/) as the graduation spec. No VMs: the iGPU can't be VFIO-passed on Strix Halo. | `container/`, `flake.nix` |
 | Discipline | patch overlay + MANIFEST + verify script + packaging tests (after [AlexKGwyn/ds4-vllm](https://github.com/AlexKGwyn/ds4-vllm), Apache-2.0) | `patches/`, `tests/` |
 
@@ -62,6 +71,8 @@ Four findings from tonight's source sweep (full evidence with file:line pins in
 - [x] Estate + spec bootstrap (spec-lint clean; tally campaign spec ratifiable)
 - [x] **Fork assembly** — [`mecattaf/vllm@flashnext`](https://github.com/mecattaf/vllm/tree/flashnext): 12 commits on the PR base, mirrored in [`patches/`](patches/) with MANIFEST. FP8-MoE admission + in-kernel upcast (MoE *and* linear), the AMD PLE/mmap port with the FP8 embedding stack, APU memory-accounting fix, four upstream cherry-picks
 - [x] RDMA day-2 attended package (`host/rdma/`) — sockets stay tonight's transport
+- [x] **Pre-arm host bake** — matched-set patched thunderbolt + ibverbs stack live and verified on **both** twins (`usb4_rdma0` + `usb4_rdma5` present by design, links up, rail soaks loss-free). Sockets remain the transport of record; `NCCL_IB_DISABLE=1` is now *unconditional* precisely because the verbs devices exist. RDMA itself is the attended morning A/B, never tonight.
+- [x] Spec ratified; all five worklist gates green (unit tests, spec-lint, flake check, fork verify, receipts verify); weights pre-staging launched; **campaign arming**
 - [ ] Container build (overnight, tally-governed)
 - [ ] Weights staged on both nodes (NAS → NVMe, hash-verified)
 - [ ] Proxy first light (single node)
@@ -96,6 +107,36 @@ the [evidence](specs/flashnext/evidence/)):
 - **The engram table wants your SSD, not your RAM**: `VLLM_PLE_MMAP` serves
   51.2B parameters of factual-recall memory as ~2.5 KB/token of page-cache
   faults — and at TP=2 it also deletes a per-token all-reduce.
+
+And four more from the pre-arm host bake (2026-08-29, evidence in
+`host/rdma/` and `handoff/PREARM-REBOOT.md`):
+
+- **The Strix Halo NHI has exactly 3 DMA rings per controller** (verified via
+  the driver's own debugfs; independently corroborated by the only other known
+  cross-host Strix transport project): control + thunderbolt-net + ONE RDMA
+  lane. The advertised *second* native lane per cable fails one boot-time
+  probe with a cosmetic `-12` — a laundered `-EINVAL` from `nhi_alloc_hop`
+  ("invalid hop: -1") — permanent, harmless, cleans up fully, never retries.
+  Don't chase it.
+- **Every ibverbs device advertises rail 0's GID** (one global roce_netdev for
+  every rail), so `NCCL_IB_HCA` must be the **EXACT** string `usb4_rdma0` — a
+  prefix match, or `usb4_rdma5`, silently routes RDMA onto the wrong wire.
+  (`usb4_rdma5` itself is deliberate fixed-stride naming so both nodes compute
+  identical names for the same physical lane; do not rename it.)
+- **The XDomain wedge hazard**: RDMA DMA TX toward a peer with no open RX ring
+  stalls on zero E2E credits and can take TCP *on the same cable* down with
+  it — reboot-only recovery. Discipline: out-of-band TCP barrier (over
+  ethernet) before the first verbs transmit; never both sides' rings down
+  simultaneously; worker-first teardown. Full protocol in
+  `host/rdma/ab-protocol.md`.
+- **The amdgpu ISM/SSO `dc_lock` ABBA shutdown deadlock**: a Strix Halo node
+  driving real panels (2×5K here) hangs on EVERY reboot inside
+  `device_shutdown` — `dm_suspend()` holds `dc_lock` while sync-flushing
+  ISM/SSO delayed work that itself takes `dc_lock` — while a headless twin
+  with a fake EDID never arms the FSM and never hangs. Fixed upstream in
+  7.1.6/7.2 (mainline `3714fe242592`; 7.1.5 still has it).
+  `watchdog.stop_on_reboot=0` makes a wedged box self-reset in 2 min instead
+  of hanging forever.
 
 *Everything here is Apache-2.0 except where `THIRD_PARTY_NOTICES.md` says
 otherwise. Model weights are not included and are governed by their own license.*
