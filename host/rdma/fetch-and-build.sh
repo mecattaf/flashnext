@@ -326,6 +326,12 @@ build_matched_set() {
   $CAP make -j1 -C "$WORK/kdir" M="$WESTERI_DIR/drivers/thunderbolt" clean >/dev/null 2>&1 || true
   $CAP make -j"$(nproc)" -C "$WORK/kdir" M="$WESTERI_DIR/drivers/thunderbolt" 2>&1 | tail -3
   cp -f "$WESTERI_DIR/drivers/thunderbolt/thunderbolt.ko" "$OUT/thunderbolt-patched.ko"
+  # The same M= build also produces the MATCHED thunderbolt_stream.ko (7.2's
+  # in-tree USB4STREAM lives in this dir upstream). Stage it alongside: on a
+  # patched-core boot the in-tree stream module must never be mixed in (the
+  # series changes the XDomain protocol-handler ABI stream registers against
+  # -- same doctrine as net), so the loader wants this matched copy.
+  cp -f "$WESTERI_DIR/drivers/thunderbolt/thunderbolt_stream.ko" "$OUT/thunderbolt_stream.ko"
 
   log "2/3 thunderbolt_net (against core symvers)"
   $CAP make -j1 -C "$WORK/kdir" M="$WESTERI_DIR/drivers/net/thunderbolt" clean >/dev/null 2>&1 || true
