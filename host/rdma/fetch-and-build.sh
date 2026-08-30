@@ -79,12 +79,15 @@ LOCAL_SERIES="
 0009-thunderbolt-xdomain-lane-bonding-module-param.patch
 "
 
-# 7.2.0: deliberate pin update 2026-08-29 — the fleet migrated off 7.1.4
-# (dotfiles#244/#248: coordinator shutdown deadlock fixed in 7.2). The
-# 10-file series + module build must be re-proven against 7.2 headers; the
-# staged 7.1.4 artifacts under ~/.local/state/flashnext-rdma/7.1.4 are dead
-# (vermagic) and superseded by this re-bake.
-TARGET_KVER="${TARGET_KVER:-7.2.0}"
+# 7.2.2: deliberate pin update 2026-08-30 — the twins ride nixpkgs-fresh's
+# linuxPackages_7_2 (dotfiles#244), bumped to the 7.2.2 point release; the
+# new kernel activates at each twin's next boot, and THIS gate keeps the
+# re-bake honest: it refuses to build until the box actually runs 7.2.2,
+# because vermagic follows the running kernel, not the deployed one. The
+# 7.2.0 set staged 2026-08-29 (which included the first clean series apply
+# on 7.2 headers) is superseded the moment 7.2.2 boots; earlier staged
+# trees (7.1.4, 7.2.0) are vermagic-dead once the fleet moves on.
+TARGET_KVER="${TARGET_KVER:-7.2.2}"
 KVER="${1:-$(uname -r)}"
 CACHE_DIR="${FLASHNEXT_RDMA_CACHE:-$HOME/.cache/flashnext-rdma-build}"
 STAGE_DIR="${FLASHNEXT_RDMA_STAGE:-$HOME/.local/state/flashnext-rdma}"
