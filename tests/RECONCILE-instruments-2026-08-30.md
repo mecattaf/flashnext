@@ -210,3 +210,94 @@ previous note:
 
 This attempt touches exactly one tracked file,
 `tests/RECONCILE-instruments-2026-08-30.md`.
+
+---
+
+# Rev 4 — carrier for the proxy first-light fixes `8669bad`, 2026-08-30
+
+Fourth stateless reconcile attempt, for revision `152cd533`. The lane was re-run
+on a newer base once more. The overlay deliverable and all three earlier note
+sections are already committed, so this section is the non-empty change this
+attempt lands — same reason as before (the spec-build driver rejects a zero-diff
+squash, and `--allow-empty` stages nothing either).
+
+## HEAD at verification
+
+    c9c4fc2  instruments: Engagement-proof instruments adapted into the container overlay (rev 3: carrier for make-proxy fixes)
+
+`4b1d714` is still an ancestor of this HEAD, and all four deliverable blobs
+remain byte-identical to that landing commit — compared by git object id, not
+by re-reading the files:
+
+| path | vs `4b1d714` |
+| --- | --- |
+| `container/rootfs/fn_synctrace.py` | identical |
+| `container/rootfs/fn_offload_batch.py` | identical |
+| `container/rootfs/fn_expert_union.py` | identical |
+| `tests/test_instruments.py` | identical |
+
+Nothing in the overlay needed rewriting, so nothing was rewritten.
+
+## Lineage note
+
+`237d508` — the make-proxy fix set rev 3 carried forward without reproducing —
+is now an **ancestor** of this base, so that carry is discharged, exactly as
+`ae10e94`'s was at rev 3.
+
+The commit this rev-4 title names, **`8669bad`** ("proxy first light: five more
+fixes proven by local serve to SERVE-READY"), is present on `main` but **not**
+an ancestor of base `c9c4fc2`. It carries the engram weight_scale in-place
+stream fix, the model-derived table row count, ple-layer-only table files, the
+flash-attn 2.8.3 Triton-AMD build, and the amdsmi `.pth` bridge. Its diff
+touches three paths:
+
+| path | inside `container/rootfs` or `tests`? |
+| --- | --- |
+| `container/Containerfile` | no — `container/`, not `container/rootfs/` |
+| `scripts/make-proxy.sh` | no |
+| `results/receipts/build.json` | no |
+
+All three sit outside this task's conflict domains, so reproducing any part of
+`8669bad` here would write past the stated boundary. This lane carries the
+lineage forward without reproducing the change, as rev 2 and rev 3 did for
+their respective carriers. Nothing in `8669bad` changes what the three
+instrument modules must do: it moves the image build and the checkpoint
+builder, not the overlay the instruments live in.
+
+## Acceptance evidence
+
+`instruments-compile-with-notices`, run verbatim, exit 0:
+
+- `python3 -m py_compile` — clean on all three modules.
+- `grep -l 'Adapted from' container/rootfs/fn_*.py | wc -l` — `3`.
+- `python3 -m unittest tests.test_instruments -v` — **Ran 11 tests, OK**.
+
+Repo suite, all eight test modules named explicitly — **Ran 116 tests, OK**,
+unchanged from rev 3. (`unittest discover` still cannot be pointed at `tests/`:
+it is a namespace package, not an importable start directory.) The acceptance
+command is side-effect-free on tracked paths — `git status --porcelain` printed
+nothing both before and after the run; the `__pycache__` `py_compile` drops
+beside the overlay is gitignored and untracked.
+
+Re-checked alongside acceptance, against the goal rather than against the
+previous note:
+
+- The `FN_` env surface is complete — `FN_PROFILE`,
+  `FN_OFFLOAD_STORE_BATCH_FRAC`, `FN_OFFLOAD_PROMOTE_FRAC`, `FN_EXPERT_UNION`,
+  `FN_EU_START`, `FN_EU_CALLS`, `FN_EU_OUT` — and no module reads a
+  `DS4_`-prefixed variable; the surviving `DS4_` strings are prose inside the
+  notice headers describing the rename.
+- All three adaptation notices name their upstream file in
+  `AlexKGwyn/ds4-vllm @ a8f620d` and Apache-2.0.
+- `fn_expert_union` still wraps `fused_topk` in
+  `vllm/model_executor/layers/fused_moe/router/fused_topk_router.py` — the
+  re-target qsa-53896.md §4 establishes, not upstream's
+  `make_routing_data` — and its kill switch still defaults off.
+- `fn_offload_batch` keeps both load-bearing invariants: the store budget
+  floors at `max(offloaded_block_sizes)`, and promotion is counted in blocks
+  rather than tokens.
+
+## Boundary
+
+This attempt touches exactly one tracked file,
+`tests/RECONCILE-instruments-2026-08-30.md`.
