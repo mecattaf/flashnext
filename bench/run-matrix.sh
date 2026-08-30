@@ -211,7 +211,41 @@ serve_arm() {
 
   CURRENT_ARM="$arm"
   wait_ready || return 1
+  warmup_arm || return 1
   log "arm '$arm' is serving"
+}
+
+# JIT warmup per arm, ds4-vllm's two-request protocol (ds4-vllm-warmup.py):
+# a tiny completion compiles the ~dozens of Triton decode/drafter kernels
+# once per rank, then ONE deep prefill at the matrix's max depth grows the
+# context through every indexer depth bucket on the way up — no per-depth
+# sweep needed. Without this the FIRST measured load of each (arm, depth)
+# cell pays the JIT stalls and corrupts its cell. The warmup prompt is
+# synthetic and unique per arm flip, so no measured cell can hit prefix
+# cache or disk-KV reuse seeded by warmup.
+warmup_arm() {
+  local max_depth="${DEPTHS[-1]}" nonce
+  nonce="$(date +%s%N)"
+  log "warmup: tiny request (kernel JIT), arm '$CURRENT_ARM'"
+  curl -fsS -m 600 -X POST "$API/v1/completions" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$MODEL\",\"prompt\":\"warmup $nonce: say ACK.\",\"max_tokens\":12,\"temperature\":0}" \
+    >/dev/null || { log "warmup tiny request failed"; return 1; }
+  log "warmup: one ${max_depth}-token prefill (walks every depth bucket)"
+  python3 - "$API" "$MODEL" "$max_depth" "$nonce" <<'PY' || { echo "run-matrix: warmup deep prefill failed" >&2; exit 1; }
+import json, sys, urllib.request
+api, model, depth, nonce = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+lines = [f"warmup {nonce} line {i}: id={i} value={(i*7919)%100003} tag={chr(65+i%6)}"
+         for i in range(max(1, depth // 14))]
+body = {"model": model, "prompt": "\n".join(lines), "max_tokens": 4,
+        "temperature": 0}
+req = urllib.request.Request(api + "/v1/completions",
+                             data=json.dumps(body).encode(),
+                             headers={"Content-Type": "application/json"})
+with urllib.request.urlopen(req, timeout=7200) as r:
+    r.read()
+print("run-matrix: warmup deep prefill complete")
+PY
 }
 
 # --- one measured cell: the client at (arm, load, depth) ----------------------

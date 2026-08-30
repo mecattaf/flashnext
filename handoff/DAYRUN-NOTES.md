@@ -133,3 +133,30 @@ Addendum 10:11: cp-weights DONE on proven head 6e81834 (purity saga closed).
 Stale quiescent summary ref made subsequent passes fail ("summary/quiescent
 disagrees with this outcome"); retired via `tally flow supersede` (successor
 01a051b9-538a, reason operator). Steers 7/8 answered inbox holds 47/43.
+
+## ds4-vllm MTP deep-dive (opus subagent, 2026-08-30 ~12:40) — key transfers
+
+Source: /home/tom/Downloads/ds4-vllm (main a8f620d + unmerged branch
+origin/piecewise-cuda-graphs; overlay repo, patches + rootfs files).
+Corrections to community lore: DS4_MTP_STATS and ds4-bench.sh DO NOT EXIST
+in the published repo (host/bench/ is gitignored — acceptance counters are
+greenfield for us); the small-batch MoE fast-path bound is branch-only and
+is `n_rows * experts_per_token <= 64 and n_rows <= 16` (ds4_tiny_routing.py:102),
+not "8 tokens" — with their K=6 verify rows that still cliffs at C=2, and
+with our n=3 (4 rows/stream) a similar gate would cliff at C=2 as well IF
+our MoE stack had one (ours is TritonExperts fp8 — different stack; read
+cp-bench concurrency cells with this in mind, spec-off arms are the control).
+Lifted into our tree: run-matrix.sh warmup_arm() (their two-request protocol:
+tiny JIT request + ONE max-depth prefill walks every indexer bucket).
+For any future MTP work on our fork: steal the stash contract
+(step-0-computes-all, steps replay a column; spec_step_idx instead of a
+blocking D2H replay marker), the load_weights critical_missing diagnostics,
+the `attn_metadata is not None` dummy-run probe before self-managed graphs,
+and make any concurrency-cap bail-out LOUD (their DS4_MTP_MAXSEQS silently
+stops speculating). Their serve pins: --max-num-batched-tokens 512 at 256K
+(indexer workspace scales batch x context; we run 2048 — drop to 512 on
+OOM per DAYRUN plan), --kv-cache-memory-bytes pinned because profiling
+happens before late allocations (gpu-memory-utilization then inert).
+TRITON_CACHE_DIR/TORCHINDUCTOR_CACHE_DIR pinned persistent (tmpfs default
+= full recompile every boot, ~25 min) — worth checking our container env.
+Full report in session transcript; branch dspark_mtp.py dumped to scratchpad.
