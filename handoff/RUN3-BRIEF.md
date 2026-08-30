@@ -1949,3 +1949,148 @@ want it ready, **do not load it inside the run**.
 §2.1's three structural worklist defects — receipts destroyed by the `results/receipts`
 conflict-domain shape, unowned executables, and the blind closing gate — are **worklist
 authoring** problems and belong to the pass that converts this brief into a run.
+
+---
+
+## 18. TALLY FLOW AUTHORING RULES — read from the source at 62fac87
+
+Derived by reading `~/mecattaf/tally.nix` at **HEAD = 62fac87** (the pin now live on
+both twins). Citations are file:line in that tree. This supersedes §1 and §2.1 wherever
+they conflict — several of their conclusions were correct about the symptom and wrong
+about the remedy.
+
+### 18.1 The escalation-fold wedge is FIXED. Do not rename the campaign.
+
+`101cd03` — *"campaign: a pardon releases the lifetime latch for the reader too (#642)"*.
+Two folds over one append-only log disagreed: `#626` gave a pardon reach over the
+ten-attempt lifetime backstop in the **driver's** fold and left the **CLI's** copy on the
+older semantics. The driver only posts an escalation when its own fold says none is live,
+so after a pardon it posted again every quiescent pass, while the CLI counted a pardoned
+task as a contributor to every one of them.
+
+The fix, at `campaign.rs:6124-6131` and `:6139-6142`: a campaign-wide pardon now does
+`lifetime_attempts.clear()`, and a task-scoped pardon does `lifetime_attempts.remove(id)`
+per task — matching `fold_attempt_receipts` on the driver side.
+
+**Verified empirically on the live estate after the pin landed:** `tally-campaign-poll.service`
+**succeeds**, same campaign, same state, new binary. The refusal also now names its
+claimants instead of printing a bare count.
+
+> **SUPERSEDES §1.1's FIX.** Run 3 does **not** need a new campaign name. Keep `flashnext`.
+> The receipt log, the ref namespace and the durable record all stay. §1.2's stale
+> `summary/quiescent` ref is **not** mooted by a rename any more — if it bites, delete it
+> explicitly.
+
+The ledger now reports it holds **`cp-tp2`**, with 14 of 18 admitted tasks carrying no
+completion fact. That is the true remaining state, and it is answerable with
+`tally campaign inbox` + `tally campaign steer`.
+
+### 18.2 ALL-OPUS: how to declare it, and why it was refused before
+
+Issue **#624** (`FlowAdmissionDenied`, empty details, 11 burned attempts) is now explained
+and fixed. `flake.nix:4566-4568`: *"An adapter with a null `launch.model` authorizes no
+override, which is what refused every worklist `agent.model`."* The `claude-code` adapter
+now declares a model contract. From the **deployed** config (`~/.config/tally/config.json`):
+
+```json
+"claude-code": {
+  "launch": {
+    "model": { "allowedValues": ["claude-opus-5","claude-fable-5","claude-sonnet-5",
+                                 "claude-opus-4-8","claude-haiku-4-5"],
+               "argv": ["--model","%<value>%"] },
+    "modelEnv": "ANTHROPIC_MODEL"
+  }
+}
+```
+
+**To make the night all-opus:** set `campaign.agent.model = "claude-opus-5"` with
+`adapter: "claude-code"`. `agent.model` is a validated field on `CampaignAgent`
+(`campaign_contract.rs:validate_agent`). A declaration reaches **three** places and #648's
+whole claim is that they agree: the durable row, the rendered argv (`--model claude-opus-5`),
+and the unit's own `--setenv ANTHROPIC_MODEL=claude-opus-5` (`3838e8b`).
+
+Precedence and provenance (`exec_attestation.rs:63,155-160`): a task naming its own model
+overrides the campaign declaration and stamps `modelProvenance: "task"`; the campaign
+declaration stamps `"daemon-config"`. A lane on a *different* adapter takes no default and
+carries no stamp claiming it did.
+
+**Verify BEFORE attempts burn** — the model is stamped into each execution receipt
+(`89d6313`), so read the attestation rather than trusting the config:
+`jq -r 'select(.payload.model) | [.payload.model, .payload.modelProvenance] | @tsv' ~/.local/state/tally/exec-attestations.jsonl | sort -u | tail`.
+Anything other than `claude-opus-5 daemon-config` on a lane means the declaration did not take.
+
+### 18.3 RECEIPT SURVIVAL — §2.1's remedy is ILLEGAL; here is the real one
+
+The two task kinds are contractually different (`campaign_contract.rs:451-490`):
+
+| | `implementation` | `checkpoint` |
+|---|---|---|
+| `conflictDomains` | **required**, is the write boundary | **FORBIDDEN** — *"checkpoint task {id} must not carry conflictDomains"* (`:473`) |
+| `argv` / `runtimeMaxSec` | **forbidden** | **required**, `runtimeMaxSec > 0` |
+| runs | an agent lane | a command |
+
+> **So "give each checkpoint its receipt path in conflictDomains" — the obvious reading of
+> §2.1 defect 1 — is rejected by the schema.** Checkpoints VERIFY; implementations WRITE.
+
+The purity rule is `git status --porcelain **--untracked-files=no**`
+(`actions.rs:4794-4806`). **Only TRACKED changes are refused.** An untracked receipt is
+legal — it simply dies with the worktree, because a checkpoint owns no paths and nothing
+it writes is ever committed. That is the whole of why two green nights banked no evidence.
+
+`scripts/receipt-restore.py` already solves the *other* half (a re-run re-stamps `ts` and
+dirties a tracked receipt → purity refusal); its own docstring notes *"New (untracked)
+receipts are never touched"* — they land, in a directory about to be deleted.
+
+**THE PATTERN TO AUTHOR:**
+
+1. **Every checkpoint writes its receipt to a durable absolute path outside any worktree** —
+   `$FN_STATE_DIR/receipts/<step>.json`. `FN_STATE_DIR` is already bind-mounted into the
+   containers at the same path on both nodes (`fn-cluster-up.sh:83,98`), so this costs
+   nothing and works from inside the serve container.
+2. **One final `implementation` task owns `results/receipts`** and copies
+   `$FN_STATE_DIR/receipts/*` into the repo, then commits. It is the only task that may,
+   and it must be the last one that writes there.
+3. **Never let two tasks own `results/receipts`.** Run 2 had `container-recipe` owning the
+   directory and `proxy-tooling` owning `results/receipts/proxy.json` — a parent/child
+   overlap that `validate_conflict_domains` flags (`conflict-domains-parent` in the
+   contract corpus).
+4. Keep writing receipts **untracked-first**: a checkpoint that modifies a tracked file
+   fails purity, so the collector task — not the checkpoint — is what makes them tracked.
+
+### 18.4 Other contract facts worth having in hand
+
+- Task fields (`CampaignTaskReference`, `campaign_contract.rs:158-176`): `id`, `kind`,
+  `issue` (u64), `dependencies` (must name an **earlier** task, no repeats), optional
+  `conflictDomains`, `argv`, `runtimeMaxSec`. `deny_unknown_fields` — a typo is a hard
+  admission failure, not a warning.
+- `conflictDomains` must be an **array when present** (`:179-187`); `null` is refused.
+- Overlap rules only bind when `maxParallel > 1` (`:459`). At `maxParallel: 1` the domains
+  are still the write boundary but never a scheduling constraint.
+- Gates come in two kinds: `command` (`preflightArgv` + `argv`) and `forbidPaths`.
+  `forbidPaths` is unused by us and is the cheap way to make "no lane may touch X" a
+  campaign-level invariant.
+- **Title cap:** `#647` is fixed — the cap counts **characters wherever it is declared**
+  (`c2eba58`). §2.2's warning that `cp-weights`' 277-of-300-**byte** title had no headroom
+  is stale.
+- **`--wait` and lineage:** `8378193` — a lost `--wait` keeps its arm, and `main` is not
+  the lineage (#644, #639).
+- **Empty-diff lanes:** `3eabd6f` — *"a lane with nothing to change completes"* (#635).
+  §2.1's zero-diff squash failure class is fixed; a task whose work is already done no
+  longer burns an attempt.
+- **Salvage:** `864cfb1` / `7fdc935` — a steward answer the result schema refused is now
+  repaired before an operator is woken (#638), bounded to the refused answer.
+
+### 18.5 What remains OUR problem, not the harness's
+
+§2.1 defects 2 and 3 are unaffected by the pin and are pure authoring:
+
+- **Unowned executables.** `scripts/run-smoke.sh`, `stage-weights.sh`,
+  `stage-weights-both.sh`, `verify-fork.sh`, `receipt-restore.py` are *executed* by
+  checkpoints and owned by **no** task's conflictDomains, so no lane could ever fix them.
+  The podman `-i` defect in `run-smoke.sh` alone burned ~5 hours and 6 receipts.
+  **Give them an owner.**
+- **The closing gate is blind.** `scripts/receipts-verify.py` exits 0 on *"3 receipts
+  checked, 0 violations"* because missing receipts are legal — verified again tonight, and
+  13 were pre-declared. It cannot distinguish "nothing ran" from "everything passed".
+  **The closing checkpoint must assert the expected receipt SET, not just the validity of
+  whatever it finds.**
