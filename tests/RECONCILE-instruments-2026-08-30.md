@@ -301,3 +301,106 @@ previous note:
 
 This attempt touches exactly one tracked file,
 `tests/RECONCILE-instruments-2026-08-30.md`.
+
+---
+
+# Rev 5 — carrier for the bench warmup `d446d2b`, 2026-08-30
+
+Fifth stateless reconcile attempt, for revision `99f8dc2d`. The lane was re-run
+on a newer base again. The overlay deliverable and all four earlier note
+sections are already committed, so this section is the non-empty change this
+attempt lands — same reason as before (the spec-build driver rejects a zero-diff
+squash, and `--allow-empty` stages nothing either).
+
+## HEAD at verification
+
+    69053ad  instruments: Engagement-proof instruments adapted into the container overlay (rev 4: carrier for proxy first-light fixes 8669bad)
+
+`4b1d714` is still an ancestor of this HEAD, and every deliverable blob remains
+byte-identical to that landing commit — compared by git object id, not by
+re-reading the files:
+
+| path | vs `4b1d714` |
+| --- | --- |
+| `container/rootfs/fn_synctrace.py` | identical (`125cd1c0e769`) |
+| `container/rootfs/fn_offload_batch.py` | identical (`097d4f478c19`) |
+| `container/rootfs/fn_expert_union.py` | identical (`6d9051ee22df`) |
+| `container/rootfs/.keep` | identical (`6387ced7ac58`) |
+| `tests/test_instruments.py` | identical (`0b0026cd63f6`) |
+
+No attempt in this lane has ever rewritten a module; each rev has added exactly
+one section to this note.
+
+## Lineage note
+
+`8669bad`, the commit rev 4's title named, is now an **ancestor** of this base,
+so that carry is discharged — exactly as `ae10e94`'s was at rev 3 and rev 3's
+make-proxy fixes were at rev 4.
+
+The commit this rev-5 title names, **`d446d2b`** ("bench: per-arm JIT warmup
+(ds4-vllm two-request protocol) + MTP intel notes"), is present on `main` but
+**not** an ancestor of base `69053ad`. It adds `warmup_arm()` after each arm's
+readiness gate — a tiny completion to compile the Triton decode/drafter
+kernels, then one max-depth prefill to walk every indexer depth bucket in a
+single pass — with a unique nonce prompt so no measured cell can be served from
+warmup-seeded cache. Its diff touches two paths:
+
+| path | inside `container/rootfs` or `tests`? |
+| --- | --- |
+| `bench/run-matrix.sh` | no |
+| `handoff/DAYRUN-NOTES.md` | no |
+
+Both sit outside this task's conflict domains, so reproducing any part of
+`d446d2b` here would write past the stated boundary. This lane carries the
+lineage forward without reproducing the change, as revs 2 through 4 did for
+their carriers.
+
+Nothing in `d446d2b` changes what the three instrument modules must do, and one
+point is worth stating because the two touch the same measurement: the warmup
+is a *bench-harness* concern — it moves when a cell is measured, not what the
+overlay records. `fn_synctrace`'s window is still opened by `FN_PROFILE` and
+`fn_expert_union`'s by `FN_EXPERT_UNION`/`FN_EU_START`, all default off, so a
+warmup request that runs before those windows open contributes no events. The
+kill switches are what keep warmup traffic out of the measured counts; no
+change is needed here to accommodate the new warmup step.
+
+## Acceptance evidence
+
+`instruments-compile-with-notices`, run verbatim, exit 0:
+
+- `python3 -m py_compile` — clean on all three modules.
+- `grep -l 'Adapted from' container/rootfs/fn_*.py | wc -l` — `3`.
+- `python3 -m unittest tests.test_instruments -v` — **Ran 11 tests, OK**.
+
+Repo suite, all eight test modules named explicitly — **Ran 116 tests, OK**,
+unchanged from rev 4. (`unittest discover` still cannot be pointed at `tests/`:
+it is a namespace package, not an importable start directory.) The acceptance
+command is side-effect-free on tracked paths — `git status --porcelain` printed
+nothing both before and after the run; the `__pycache__` `py_compile` drops
+beside the overlay is gitignored and untracked.
+
+Re-checked alongside acceptance, against the goal rather than against the
+previous note:
+
+- The `FN_` env surface is complete and is the only env surface — a scan of all
+  three modules yields exactly `FN_PROFILE`, `FN_OFFLOAD_STORE_BATCH_FRAC`,
+  `FN_OFFLOAD_PROMOTE_FRAC`, `FN_EXPERT_UNION`, `FN_EU_START`, `FN_EU_CALLS`,
+  `FN_EU_OUT`. No module reads a `DS4_`-prefixed variable; the surviving `DS4_`
+  and `ds4` strings are prose inside the notice headers and docstrings
+  describing the rename and the upstream motivation.
+- All three adaptation notices name their upstream file in
+  `AlexKGwyn/ds4-vllm @ a8f620d` and Apache-2.0.
+- `fn_expert_union` still wraps `fused_topk` in
+  `vllm/model_executor/layers/fused_moe/router/fused_topk_router.py` — the
+  re-target qsa-53896.md §4 establishes, not upstream's
+  `make_routing_data`, which is never on this model's path — and its kill
+  switch still defaults off.
+- `fn_offload_batch` keeps both load-bearing invariants: the store budget
+  floors at `max(offloaded_block_sizes)` (below that floor `_build_store_jobs`
+  would advance a group's cursor past blocks that are then skipped for good),
+  and promotion is counted in blocks rather than tokens.
+
+## Boundary
+
+This attempt touches exactly one tracked file,
+`tests/RECONCILE-instruments-2026-08-30.md`.
