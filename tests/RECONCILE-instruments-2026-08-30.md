@@ -125,3 +125,88 @@ rename; no module reads a `DS4_`-prefixed variable.
 ## Boundary
 
 This attempt touches exactly one tracked file, `tests/RECONCILE-instruments-2026-08-30.md`.
+
+---
+
+# Rev 3 — carrier for the make-proxy fixes, 2026-08-30
+
+Third stateless reconcile attempt, for revision `bc2182b6`. The lane was re-run
+on a newer base again. The overlay deliverable and both earlier note sections
+are already committed, so this section is the non-empty change this attempt
+lands — same reason as before (the spec-build driver rejects a zero-diff
+squash, and `--allow-empty` stages nothing either).
+
+## HEAD at verification
+
+    c06bb79  instruments: Engagement-proof instruments adapted into the container overlay (rev 2: lineage carrier for ae10e94)
+
+`4b1d714` is still an ancestor of this HEAD, and all four deliverable blobs
+remain byte-identical to that landing commit — compared by git object id, not
+by re-reading the files:
+
+| path | vs `4b1d714` |
+| --- | --- |
+| `container/rootfs/fn_synctrace.py` | identical |
+| `container/rootfs/fn_offload_batch.py` | identical |
+| `container/rootfs/fn_expert_union.py` | identical |
+| `tests/test_instruments.py` | identical |
+
+Nothing in the overlay needed rewriting, so nothing was rewritten.
+
+## Lineage note
+
+Two make-proxy commits bear on this revision, and they sit on opposite sides of
+this lane's base:
+
+- **`ae10e94`** ("smoke/proxy: podman run -i so heredocs reach python3 -") —
+  the lineage rev 2 carried forward. It is now an **ancestor** of this base, so
+  that carry is discharged.
+- **`237d508`** ("make-proxy: three first-run fixes against the real workload":
+  the `read_header` tuple unwrap, keying the engram table off the first
+  shard-bearing layer, and verifying against `_LayerShards.shards`) — present
+  on `main`, **not** an ancestor of base `c06bb79`. It is the fix set this
+  rev-3 title names.
+
+`237d508` touches `scripts/make-proxy.sh` and nothing else. That path is
+outside this task's conflict domains (`container/rootfs`, `tests`), so
+reproducing it here would write past the stated boundary. This lane therefore
+carries the lineage forward without reproducing the change, exactly as rev 2
+did for `ae10e94`.
+
+## Acceptance evidence
+
+`instruments-compile-with-notices`, run verbatim, exit 0:
+
+- `python3 -m py_compile` — clean on all three modules.
+- `grep -l 'Adapted from' container/rootfs/fn_*.py | wc -l` — `3`.
+- `python3 -m unittest tests.test_instruments -v` — **Ran 11 tests, OK**.
+
+Repo suite, all eight test modules named explicitly — **Ran 116 tests, OK**,
+unchanged from rev 2. (`unittest discover` still cannot be pointed at `tests/`:
+it is a namespace package, not an importable start directory.) The `__pycache__`
+that `py_compile` drops beside the overlay is gitignored and untracked, so the
+acceptance run leaves no tracked file modified — `git status --porcelain` is
+empty both before and after it.
+
+Re-checked alongside acceptance, against the goal rather than against the
+previous note:
+
+- The `FN_` env surface is complete — `FN_PROFILE`,
+  `FN_OFFLOAD_STORE_BATCH_FRAC`, `FN_OFFLOAD_PROMOTE_FRAC`, `FN_EXPERT_UNION`,
+  `FN_EU_START`, `FN_EU_CALLS`, `FN_EU_OUT` — and no module reads a
+  `DS4_`-prefixed variable; the surviving `DS4_` strings are prose inside the
+  notice headers describing the rename.
+- All three adaptation notices name their upstream file in
+  `AlexKGwyn/ds4-vllm @ a8f620d` and Apache-2.0.
+- `fn_expert_union` still wraps `fused_topk` in
+  `vllm/model_executor/layers/fused_moe/router/fused_topk_router.py` — the
+  re-target qsa-53896.md §4 establishes, not upstream's
+  `make_routing_data` — and its kill switch still defaults off.
+- `fn_offload_batch` keeps both load-bearing invariants: the store budget
+  floors at `max(offloaded_block_sizes)`, and promotion is counted in blocks
+  rather than tokens.
+
+## Boundary
+
+This attempt touches exactly one tracked file,
+`tests/RECONCILE-instruments-2026-08-30.md`.
