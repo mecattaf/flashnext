@@ -39,9 +39,16 @@ ENV_FILTER='^(FN_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_
 ( set -a; source "$SCRIPT_DIR/fn-env.sh" >/dev/null; env ) \
   | grep -E "$ENV_FILTER" | LC_ALL=C sort > "$TMP/env.coordinator"
 
+# The transport decision is made ONCE on the coordinator and injected into
+# the worker's sourcing as pre-set literals (mirrors fn-cluster-up.sh): the
+# byte-diff then verifies everything else AND that both ranks agree on the
+# coordinator-decided transport.
 REMOTE_TMP="$(worker 'mktemp -d')"
 worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
-worker "( set -a; source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
+worker "( set -a; \
+    NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME' \
+    FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG' \
+    source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
   | grep -E '$ENV_FILTER' | LC_ALL=C sort" > "$TMP/env.worker"
 
 if cmp -s "$TMP/env.coordinator" "$TMP/env.worker"; then
@@ -104,12 +111,16 @@ for node in coordinator worker; do
   done <<< "$speeds"
 done
 
-# --- 4. round-trip probe on both rails, from both ends -------------------------
-# Peer of a /30 endpoint flips the last octet (.1 <-> .2). A rail that does
-# not carry a routable IP cannot be probed and is recorded as no-peer-ip.
-rtt_probe_node() {
+# --- 4. round-trip probe, from both ends ---------------------------------------
+# Peer of a /30 endpoint flips the last octet (.1 <-> .2) — this holds on the
+# wire too (10.99.1.1 <-> 10.99.1.2). A rail that does not carry a routable
+# IP cannot be probed and is recorded as no-peer-ip. Only interfaces LISTED
+# in NCCL_SOCKET_IFNAME can fail the preflight: a dark-but-addressed rail
+# that fn-env already declined to list must not kill cp-tp2 after a clean
+# wire fallback — it is recorded as probe-failed-unlisted instead.
+rtt_probe_node() {  # $@ = interfaces to probe
   local rail addr peer rtt
-  for rail in thunderbolt0 thunderbolt1; do
+  for rail in "$@"; do
     addr="$(ip -br -4 addr show dev "$rail" 2>/dev/null \
       | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
       | grep -Ev '^(169\.254\.|127\.)' | head -n1 || true)"
@@ -123,18 +134,32 @@ rtt_probe_node() {
     printf '%s %s\n' "$rail" "${rtt:-probe-failed}"
   done
 }
+is_listed() { case ",$NCCL_SOCKET_IFNAME," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+PROBE_IFACES="thunderbolt0 thunderbolt1"
+if is_listed enp191s0; then
+  PROBE_IFACES="$PROBE_IFACES enp191s0"
+fi
 for node in coordinator worker; do
   if [ "$node" = coordinator ]; then
-    rtts="$(rtt_probe_node)"
+    rtts="$(rtt_probe_node $PROBE_IFACES)"
   else
-    rtts="$(worker "$(declare -f rtt_probe_node); rtt_probe_node")"
+    rtts="$(worker "$(declare -f rtt_probe_node); rtt_probe_node $PROBE_IFACES")"
   fi
   while read -r rail rtt; do
-    record "rtt_us_${node}_${rail}" "$rtt"
     case "$rtt" in
-      no-peer-ip) note "rtt on $node/$rail: no routable peer IP, not probed" ;;
-      probe-failed|'') fail "rtt on $node/$rail: probe failed on a routable rail" ;;
+      no-peer-ip)
+        record "rtt_us_${node}_${rail}" "$rtt"
+        note "rtt on $node/$rail: no routable peer IP, not probed" ;;
+      probe-failed|'')
+        if is_listed "$rail"; then
+          record "rtt_us_${node}_${rail}" "probe-failed"
+          fail "rtt on $node/$rail: probe failed on a rail listed in NCCL_SOCKET_IFNAME"
+        else
+          record "rtt_us_${node}_${rail}" "probe-failed-unlisted"
+          note "rtt on $node/$rail: probe failed but the rail is not listed in NCCL_SOCKET_IFNAME; recorded, not failed"
+        fi ;;
       *)
+        record "rtt_us_${node}_${rail}" "$rtt"
         if [ "$rtt" -gt "$FN_LATENCY_BUDGET_US" ]; then
           fail "rtt on $node/$rail: ${rtt} us exceeds the ${FN_LATENCY_BUDGET_US} us budget"
         else
@@ -146,9 +171,18 @@ for node in coordinator worker; do
 done
 
 record "rails_chosen" "$NCCL_SOCKET_IFNAME"
+record "transport_rung" "${FN_TRANSPORT_RUNG:-rail0-sockets}"
 record "budget_us" "$FN_LATENCY_BUDGET_US"
 
 # --- receipt --------------------------------------------------------------------
+# Quarantine on failure (receipt discipline D12): a fail receipt lands under
+# results/receipts/failed/ — committed, ledger-reviewed, a typed blocker —
+# but outside receipts-verify's grading walk, so one failed preflight cannot
+# permanently redden every later gate run.
+if [ "$status" != "pass" ]; then
+  RECEIPT="$REPO_ROOT/results/receipts/failed/preflight.json"
+  mkdir -p "$(dirname "$RECEIPT")"
+fi
 python3 - "$RECEIPT" "$status" "$REPORT" <<'PY'
 import json, sys, time
 path, status, report = sys.argv[1:4]
@@ -163,15 +197,17 @@ for n in ("coordinator", "worker"):
     hold[n] = {"unit": u, "cpu_dma_latency": v}
 rails = {}
 for node in ("coordinator", "worker"):
-    for rail in ("thunderbolt0", "thunderbolt1"):
-        rails.setdefault(rail, {})[node] = {
-            "speed_mbps": kv.get(f"speed_{node}_{rail}"),
-            "rtt_us": kv.get(f"rtt_us_{node}_{rail}"),
-        }
+    for rail in ("thunderbolt0", "thunderbolt1", "enp191s0"):
+        if f"rtt_us_{node}_{rail}" in kv or f"speed_{node}_{rail}" in kv:
+            rails.setdefault(rail, {})[node] = {
+                "speed_mbps": kv.get(f"speed_{node}_{rail}"),
+                "rtt_us": kv.get(f"rtt_us_{node}_{rail}"),
+            }
 json.dump({"step": "preflight", "status": status,
            "ts": time.strftime("%FT%T"),
            "data": {"env_byte_diff": kv.get("env_diff"),
                     "rails_chosen": kv.get("rails_chosen", "").split(","),
+                    "transport_rung": kv.get("transport_rung", "rail0-sockets"),
                     "latency_budget_us": int(kv.get("budget_us", "200")),
                     "latency_hold": hold,
                     "rails": rails}},

@@ -28,7 +28,19 @@ export FN_SERVED_NAME="${FN_SERVED_NAME:-flashnext}"
 export FN_PORT="${FN_PORT:-1234}"
 export FN_RAY_PORT="${FN_RAY_PORT:-6379}"
 export FN_MAX_CTX="${FN_MAX_CTX:-262144}"
-export FN_GPU_UTIL="${FN_GPU_UTIL:-0.83}"
+# Fork patch 0004 points memory reporting at GTT (mem_info_gtt_total =
+# 125.1 GiB on these boxes): 0.83 × 125.1 ≈ 104 GiB/rank — over the 80 GiB
+# residency bound receipts-verify grades (ruling P11) AND eating the
+# ~40 GiB/node page cache the mmap'd engram table needs BY DESIGN.
+# 0.62 × 125.1 ≈ 77.6 GiB, which lands the measured ~76–78 GiB/rank.
+export FN_GPU_UTIL="${FN_GPU_UTIL:-0.62}"
+# The KV/state budget holds the GDN slot pool — 32 slots × 54 MiB × (1+n)
+# = 6.9 GiB at n=3 speculative — plus paged KV (~5 GiB). 12 GiB ≈ four
+# concurrent 256K streams.
+export FN_KV_CACHE_BYTES="${FN_KV_CACHE_BYTES:-12884901888}"
+# The engine default of 256 sequence slots would preallocate ~14 GiB/rank of
+# GDN state spec-off — and ×4 that spec-on. Cap the slots (memory bomb).
+export FN_MAX_SEQS="${FN_MAX_SEQS:-32}"
 export FN_IMAGE="${FN_IMAGE:-flashnext:dev}"
 export FN_CONTAINER="${FN_CONTAINER:-flashnext-pair}"
 # Worker-side actions ride the ethernet wire on the STABLE fleet identity,
@@ -80,7 +92,7 @@ export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$FN_STATE_DIR/triton}"
 # the list hangs RCCL bootstrap. We log which rails we chose rather than
 # hardcoding both.
 fn_choose_rails() {
-  local rail addr chosen=""
+  local rail addr peer chosen=""
   for rail in thunderbolt0 thunderbolt1; do
     if [ ! -e "/sys/class/net/$rail" ]; then
       echo "fn-env: rail $rail absent on this node; not listed" >&2
@@ -89,27 +101,54 @@ fn_choose_rails() {
     addr="$(ip -br -4 addr show dev "$rail" 2>/dev/null \
       | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
       | grep -Ev '^(169\.254\.|127\.)' | head -n1 || true)"
-    if [ -n "$addr" ]; then
-      chosen="${chosen:+$chosen,}$rail"
-      echo "fn-env: rail $rail LISTED in NCCL_SOCKET_IFNAME ($addr is routable)" >&2
-    else
+    if [ -z "$addr" ]; then
       echo "fn-env: rail $rail NOT listed (no routable peer IP; a peerless rail in NCCL_SOCKET_IFNAME hangs RCCL bootstrap)" >&2
+      continue
+    fi
+    # Peer-reachability gate: a rail can carry a configured /30 address while
+    # its peer path is dark (measured 2026-08-30: coordinator thunderbolt0 UP
+    # with 10.99.0.1/30 and the peer unreachable). A dark-but-addressed rail
+    # in NCCL_SOCKET_IFNAME hangs RCCL bootstrap exactly like a peerless one.
+    # Three packets, ANY reply accepts: a cold neighbour cache drops the
+    # first probe ~10% of the time on a just-healed rail — a one-packet gate
+    # would flap on exactly the rail we most want listed.
+    peer="$(printf '%s' "$addr" | awk -F. '{ o=$4; $4=(o==1)?2:1; printf "%d.%d.%d.%d", $1,$2,$3,$4 }')"
+    if ping -c3 -W1 "$peer" >/dev/null 2>&1; then
+      chosen="${chosen:+$chosen,}$rail"
+      echo "fn-env: rail $rail LISTED in NCCL_SOCKET_IFNAME ($addr is routable, peer $peer answers)" >&2
+    else
+      echo "fn-env: rail $rail NOT listed (addr configured but peer unreachable — a dark rail in NCCL_SOCKET_IFNAME hangs RCCL bootstrap)" >&2
     fi
   done
   printf '%s' "$chosen"
 }
 export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-$(fn_choose_rails)}"
 if [ -z "$NCCL_SOCKET_IFNAME" ]; then
-  echo "fn-env: FATAL: no Thunderbolt rail carries a routable IP; refusing to name a phantom transport" >&2
-  return 1 2>/dev/null || exit 1
+  if [ "${FN_ALLOW_WIRE_FALLBACK:-1}" = "1" ]; then
+    # TERMINAL FALLBACK RUNG: the 5GbE wire. Degraded (~87 us RTT vs the
+    # rail's ~15 us) but a working transport beats a phantom one; the rung is
+    # recorded into every receipt so a wire night can never be mistaken for a
+    # rail night (a wire-fallback bench.json does NOT satisfy the rail-sockets
+    # Gate 0 in host/rdma/attended-bringup.md). Never the second rail, never
+    # verbs — those rungs do not exist in the unattended ladder.
+    echo "fn-env: WARNING: no Thunderbolt rail is listable; TERMINAL FALLBACK to the 5GbE wire enp191s0 (degraded, receipted)" >&2
+    export NCCL_SOCKET_IFNAME=enp191s0
+    export FN_TRANSPORT_RUNG=wire-fallback
+  else
+    echo "fn-env: FATAL: no Thunderbolt rail carries a reachable peer and FN_ALLOW_WIRE_FALLBACK=0; refusing to name a phantom transport" >&2
+    return 1 2>/dev/null || exit 1
+  fi
 fi
+export FN_TRANSPORT_RUNG="${FN_TRANSPORT_RUNG:-rail0-sockets}"
 
-# NCCL_IB_DISABLE=1 UNCONDITIONALLY. Since the pre-arm bake an ibverbs device
-# exists on the rails of BOTH nodes (usb4_rdma0 + usb4_rdma5, by design);
-# without this pin RCCL autodetects verbs and silently rides unproven RDMA.
-# Sockets stay the transport of record until the attended morning A/B lands a
-# counterbalanced verdict (host/rdma/ab-protocol.md). Do NOT conditionalize
-# this on device detection — the devices are present by design.
+# NCCL_IB_DISABLE=1 UNCONDITIONALLY. Measured truth 2026-08-30: NO ibverbs
+# device exists on either node tonight (/sys/class/infiniband is empty) and
+# nothing is staged for the running 7.2.2 kernels. The pin stays
+# unconditional anyway, so that WHEN a verbs device appears (the attended
+# morning bring-up under host/rdma) RCCL still cannot silently ride unproven
+# RDMA. Sockets stay the transport of record until the attended morning A/B
+# lands a counterbalanced verdict (host/rdma/ab-protocol.md). Do NOT
+# conditionalize this on device detection.
 export NCCL_IB_DISABLE=1
 
 # Cold-kernel-cache bring-up is ~25 min of LLVM before the first collective;
@@ -137,6 +176,26 @@ export RAY_NUM_CPUS="${RAY_NUM_CPUS:-4}"
 # zero table bytes GPU-resident (spec ruling P11's zero-GPU-residency bound
 # leans on this). VLLM_PLE_MMAP=0 is the fork's kill switch.
 export VLLM_PLE_MMAP=1
+
+# --- shared helpers -----------------------------------------------------------
+# Reap stranded serve processes on the CALLING node. Lives here (not in
+# fn-cluster-up.sh) so bench/run-matrix.sh can reuse it for its per-arm
+# cross-node reap: a rank holding 60–100 GiB of GTT OOMs the next arm. The
+# serve process tree is visible from the host /proc even when it runs inside
+# a podman container; the bracket keeps pgrep from matching itself.
+reap_serve_node() {
+  local pids
+  pids="$(pgrep -f 'bin/[v]llm serve' || true)"
+  if [ -n "$pids" ]; then
+    echo "reap_serve_node: reaping stranded serve pids: $(echo $pids | tr '\n' ' ')" >&2
+    kill -TERM $pids 2>/dev/null || true
+    sleep 3
+    pids="$(pgrep -f 'bin/[v]llm serve' || true)"
+    [ -z "$pids" ] || kill -KILL $pids 2>/dev/null || true
+    sleep 1
+  fi
+  pgrep -f 'bin/[v]llm serve' | wc -l
+}
 
 # --- estate hygiene -------------------------------------------------------------
 # Runtime hub downloads stay forbidden (spec F.6): the checkpoint is staged

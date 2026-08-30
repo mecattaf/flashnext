@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "campaign": {
     "name": "flashnext",
-    "maxTasks": 16,
+    "maxTasks": 20,
     "maxParallel": 1,
     "steward": "narrator",
     "agent": {
@@ -302,11 +302,13 @@
     {
       "id": "morning-ledger",
       "kind": "implementation",
-      "title": "Render the morning ledger and the announcement draft",
-      "goal": "Write docs/MORNING.md per spec claim 6.4 (specs/flashnext/spec.md#r6): a receipt review table (one row per receipt under results/receipts with status and the bound it was graded against), the open-items list (every UNKNOWN from the spec with its drain state), the promotion checklist (what the operator verifies before any fleet change, per ruling P13), the optimization menu (tuned mixture-kernel config generation for this GPU, graph-capture matrix, jumbo-frame A-B, draft-length sweep, the four-bit expert lane pointers from IMPORTS.md), and a blocker template implementing ruling P16. Also write docs/ANNOUNCE.md: a short community post draft describing the setup (two 128 GB unified-memory desktops, two fast rails, one control wire), what was built overnight, where the evidence lives, and where benchmarks land. Boundaries: touch only docs/.",
+      "title": "Archive the stop-state, then render the morning ledger and the announcement draft",
+      "goal": "AMENDED 2026-08-30: docs/MORNING.md currently holds the operator's 2026-08-29 day-run stop-state record — FIRST move that file verbatim to docs/DAYRUN-STOP-STATE-2026-08-29.md (git mv, keep every byte), THEN write the new docs/MORNING.md per spec claim 7.1 (specs/flashnext/spec.md#r7). This lane renders BEFORE the milestone checkpoints run (it sits early in the serial graph), so the receipt review table has two row kinds: receipts already banked at render time (build, weights, possibly smoke) carry their observed status and the bound they were graded against; every receipt that lands AFTER render is PRE-DECLARED — one row each for preflight, proxy, tp2, residency, fidelity, context, bench, and usb4stream, naming the file path, the bound scripts/receipts-verify.py grades it against, and how to read it. Three pre-declared rows are mandatory and specific: (a) results/receipts/usb4stream.json — cp-usb4stream runs dead-last after cp-close and only when the pair serve is already down; name its three typed outcomes (ok / skipped:REASON / aborted:PHASE:ERRNO), say that data.outcome is where to read them, that 'skipped:serve-up-on-shared-cable' is the EXPECTED outcome after a healthy night, and that a skipped or aborted outcome is the typed blocker for that step per F.12; (b) results/receipts/failed/ — the quarantine directory: any step that fails its own grading writes its fail receipt THERE so one graded failure cannot redden every later gate run; every file present there in the morning is a typed blocker the operator reviews first; (c) results/receipts/failed/context.json — if present, the honest full-context decode ratio undershot the 0.9 bound (12 full-attention layers walking 256K KV; the community precedent shows about a 2x falloff by 50-73k) — a typed performance finding routed to the optimization menu, deliberately NOT a campaign failure. Also render: the open-items list (every UNKNOWN from the spec with its drain state); the promotion checklist (what the operator verifies before any fleet change, per ruling P13 — and state the causality plainly: the fleet's local-models sync retires any staged artifact that has no catalog row; it pruned the staged checkpoint from BOTH nodes on 08-29 around 20:07/20:14; applying handoff/catalog-row.patch is the act that makes staging durable, and it must precede any rebuild or any restart of the model-sync trigger service); the transport-rung caveat (if any receipt records fn_transport_rung wire-fallback, the night ran on the 5GbE wire: valid but degraded receipts, and bench.json then does NOT satisfy the rail-sockets Gate 0 for verbs bring-up — healing rail 0 is the morning's first transport act); the optimization menu; and a blocker template implementing ruling P16. The optimization menu carries, beyond the original items (tuned mixture-kernel config generation for this GPU, graph-capture matrix, jumbo-frame A-B, draft-length sweep, the four-bit expert lane pointers from IMPORTS.md): the speculative-head depth sweep n in 1 to 4 plus the index-share and padded-drafter knobs (UNKNOWN-5); the attended RDMA go/no-go with the honest cost (2-4 attended hours, two more reboots, worker deploy-path fix first, nothing staged for kernel 7.2.2 yet) and honest expectation (about +3.4 percent measured precedent over held TCP); the stream-primitive morning decision rule (attended port of the reference doorbell allreduce onto the in-tree stream device ONLY if the banked exchange p50 at 8-16 KiB is at or under about 40 microseconds AND the bench matrix shows decode is allreduce-dominated — noting the stream bench likely runs attended in the morning after teardown, since it skips while the pair serves); the full-context decode probe follow-up when deferred; a rejected-with-reason register so nothing is re-litigated (the community int4-WMMA expert lane: bound to a different runtime's artifact, single-device only, unreachable even in its own public release; the indexer rotation plus FP4 QAT art: fidelity art for a different model family's trained indexer graph — our engine's indexer is weight-free bf16 with no such trained graph, so transplanting it would corrupt top-k selection); the load-phase page-cache drop-behind remedy pointer for repo issue 2 (release file pages in chunks behind the loader); a per-shape kernel block-size tuning item for the 2560x640 and 640x2560 expert shapes (community precedent: a forced tile choice beat the auto-selector on exactly these shapes); and a note to audit the drafter hidden-state versus prefix-cache position sync before the speculative profile is declared production (a community v1.1 fix records the failure mode: cached target prefix reused while the drafter state timeline sits elsewhere breaks multi-turn — the operator files the repo issue). Also write docs/ANNOUNCE.md: a short community post draft describing the setup (two 128 GB unified-memory desktops, two fast rails, one control wire), what was built overnight, where the evidence lives, and where benchmarks land. Boundaries: touch only docs/MORNING.md, docs/ANNOUNCE.md, and docs/DAYRUN-STOP-STATE-2026-08-29.md.",
       "deliveredBehaviors": [
         "The operator's first ten minutes are a checklist, not archaeology",
-        "The community post is ready to publish with the benchmark numbers"
+        "The community post is ready to publish with the benchmark numbers",
+        "Yesterday's stop-state record survives as an archive instead of being clobbered",
+        "Receipts that land after the ledger renders are pre-declared rows with their bounds, so nothing the night banks arrives unreviewed"
       ],
       "readFirst": {
         "specSections": [
@@ -327,6 +329,15 @@
             "-euc",
             "grep -q 'Receipt review' docs/MORNING.md && grep -q 'Open items' docs/MORNING.md && grep -q 'Promotion checklist' docs/MORNING.md && grep -q 'Optimization menu' docs/MORNING.md && grep -qi 'blocker' docs/MORNING.md && test -s docs/ANNOUNCE.md"
           ]
+        },
+        {
+          "id": "ledger-archive",
+          "description": "The 08-29 stop-state is archived verbatim (its identifying lines present in the archive, absent from the new ledger), the prune-causality line is in the checklist, and the stream-primitive receipt row is pre-declared.",
+          "argv": [
+            "bash",
+            "-euc",
+            "test -s docs/DAYRUN-STOP-STATE-2026-08-29.md && grep -q 'Day-run stop-state' docs/DAYRUN-STOP-STATE-2026-08-29.md && grep -q 'operator-called halt' docs/DAYRUN-STOP-STATE-2026-08-29.md && ! grep -q 'Day-run stop-state' docs/MORNING.md && grep -q 'catalog-row.patch' docs/MORNING.md && grep -q 'usb4stream' docs/MORNING.md"
+          ]
         }
       ],
       "dependencies": [
@@ -334,16 +345,19 @@
         "bench-harness"
       ],
       "conflictDomains": [
-        "docs"
+        "docs/MORNING.md",
+        "docs/ANNOUNCE.md",
+        "docs/DAYRUN-STOP-STATE-2026-08-29.md"
       ]
     },
     {
       "id": "catalog-handoff",
       "kind": "implementation",
       "title": "Prepare the fleet catalog patch for the morning operator",
-      "goal": "Write handoff/catalog-row.patch per spec claim 5.2 (specs/flashnext/spec.md#r5): a git format patch against the fleet configuration repository adding the workload checkpoint as a snapshot-layout artifact row assigned to both hosts, following the existing snapshot-layout precedent row in that repository's model library file, with pinned upstream revision and per-file byte counts read from the staged copy under /var/lib/local-models/flashnext-fp8 (or from the library mount when staging has not finished). Add handoff/README.md explaining exactly what the operator applies and verifies in the morning. The patch is prepared, never applied, by this campaign. Boundaries: touch only handoff/.",
+      "goal": "Write handoff/catalog-row.patch per spec claim 5.2 (specs/flashnext/spec.md#r5): a git format patch against the fleet configuration repository adding the workload checkpoint as a snapshot-layout artifact row assigned to both hosts, following the existing snapshot-layout precedent row in that repository's model library file, with pinned upstream revision and per-file byte counts read from the staged copy under /var/lib/local-models/flashnext-fp8 (or from the library mount when staging has not finished). Add handoff/README.md explaining exactly what the operator applies and verifies in the morning — and state the urgency plainly: the fleet's local-models sync retires any staged artifact that has no catalog row (it pruned the staged checkpoint from BOTH nodes on 2026-08-29, triggered at boot, on rebuilds, and on model-sync service starts, which is why tonight's campaign had to re-stage 185.6 GB per node); applying this patch is what ends that hazard permanently, and it must be applied BEFORE any rebuild or any restart of the model-sync trigger service. The patch is prepared, never applied, by this campaign. Boundaries: touch only handoff/.",
       "deliveredBehaviors": [
-        "The morning catalog declaration is one git apply plus one review, not authoring work"
+        "The morning catalog declaration is one git apply plus one review, not authoring work",
+        "The operator knows the patch is what stops the sync service from pruning the staged weights again"
       ],
       "readFirst": {
         "specSections": [
@@ -373,11 +387,11 @@
     {
       "id": "rdma-package",
       "kind": "implementation",
-      "title": "Integrate the operator-attended RDMA package under host/rdma",
-      "goal": "The bootstrap session scoped an operator-attended RDMA bring-up package (spec ruling P7, claim 6.4 — specs/flashnext/spec.md#r6): host/rdma/fetch-and-build.sh (pinned out-of-tree module fetch, kernel-version and secure-boot guards, staged install only), host/rdma/attended-bringup.md (the coordinated-reboot checklist with the port-controller recovery path), host/rdma/ab-protocol.md (the socket-versus-verbs adoption gate). If those files already exist in the tree, verify them against the reference bring-up doctrine in specs/flashnext/evidence/ds4-vllm-manifest.md section 7 plus specs/flashnext/evidence/nix-hardening-addendum.md and fix defects; if absent, author them from those sections' pins. Hard rules: nothing GPL is vendored — the two out-of-tree repositories are fetched at their pinned commits by the script; nothing installs or loads automatically; one rail only; the checklist states plainly that bring-up happens with the operator physically present, starts only after a committed socket-transport benchmark exists under results/, opens with the worker deploy-path repoint off the fast rail, and orders reboots worker first, never both at once. Extend the tests suite so the syntax sweep covers host/rdma and a test asserts the two pin commits appear in fetch-and-build.sh. Boundaries: touch only host/rdma and tests/.",
+      "title": "Close the RDMA package: the missing pin test plus the odinlink and kernel-truth folds",
+      "goal": "RE-SCOPED 2026-08-30 (second flow): the package files under host/rdma ALREADY EXIST on main and pass this lane's original acceptance argv verbatim — do NOT rewrite them wholesale, and do not end with an empty diff (the empty-diff completion failure is a known harness hazard). Concrete deliverables now: (1) tests/test_rdma_package.py — the test the original goal promised: assert both pin commits 503c5ae1e72aa9ed91925dafa3d82ee2e992747f and 76ba39b630a70accb72f19388eefe48844b50eb8 appear in host/rdma/fetch-and-build.sh; assert no line of that script begins with insmod or modprobe (optionally sudo-prefixed) — the no-unattended-load invariant, spec F.1; assert host/rdma/attended-bringup.md carries the 'physically present' and 'worker first' language. (2) Fold the odinlink learnings (repo issue 6, evidence at the reference estate the issue names) into host/rdma/ab-protocol.md and host/rdma/attended-bringup.md as short dated appendix sections: terminal-failure framing for verbs init (on ANY init failure: no retry, restore the socket env byte-identical on both ranks, one restart, and the terminal fallback rung is ALWAYS the ethernet wire, never the second rail); the 11 microsecond one-way rail reference figure; the per-cable p2p ceiling asymmetry; and the measured hazard that a verbs transmit toward a closed peer receive ring stalls end-to-end credits and wedges the whole XDomain INCLUDING TCP on the same cable — recovery is reboot-only, which is why no verbs rung may ever appear in an unattended fallback ladder. (3) A dated 'state of tonight' preamble note in attended-bringup.md: no ibverbs device exists on either node right now, the staged module sets cover only kernels 7.1.4 and 7.2.0 while the fleet runs 7.2.2, so the attended morning fetch-and-build on BOTH nodes (running-kernel gate 7.2.2) precedes any A/B; the honest expectation from the one measured community precedent is about +3.4 percent over held TCP — adopt only on a fingerprint-clean counterbalanced majority win. The preamble must ALSO state the Gate 0 transport-rung caveat: the banked socket-transport benchmark that unlocks bring-up must have been measured over the Thunderbolt rail — a bench receipt whose transport record reads fn_transport_rung wire-fallback is a 5GbE artifact and does NOT satisfy Gate 0; on a wire-fallback night the attended morning first heals rail 0 and re-banks a rail-sockets bench before any verbs work. Keep every existing hard rule intact: nothing GPL vendored, nothing installs or loads automatically, one rail only, bring-up starts only after a committed socket-transport benchmark exists under results/. Boundaries: touch only host/rdma and tests/.",
       "deliveredBehaviors": [
-        "Tomorrow's attended RDMA bring-up is one script plus one checklist plus one adoption gate",
-        "No unsigned module can load unattended from anything this repo ships"
+        "The two pin commits are asserted by the tests suite, not merely present in the script",
+        "Tomorrow's attended bring-up doc tells the truth about kernel 7.2.2, the missing verbs devices, the wedge blast radius, and which transport rung a Gate 0 benchmark must carry"
       ],
       "readFirst": {
         "specSections": [
@@ -397,6 +411,15 @@
             "-euc",
             "bash -n host/rdma/fetch-and-build.sh && grep -q '503c5ae1e72aa9ed91925dafa3d82ee2e992747f' host/rdma/fetch-and-build.sh && grep -q '76ba39b630a70accb72f19388eefe48844b50eb8' host/rdma/fetch-and-build.sh && ! grep -qE '^[[:space:]]*(sudo[[:space:]]+)?(insmod|modprobe)[[:space:]]' host/rdma/fetch-and-build.sh && grep -qi 'physically present' host/rdma/attended-bringup.md && grep -qi 'worker first' host/rdma/attended-bringup.md && grep -qi 'deploy' host/rdma/attended-bringup.md && test -s host/rdma/ab-protocol.md"
           ]
+        },
+        {
+          "id": "rdma-pin-test",
+          "description": "The pin test exists and passes; the odinlink fold, the 7.2.2 truth, and the wire-rung Gate 0 caveat landed in the docs.",
+          "argv": [
+            "bash",
+            "-euc",
+            "python3 -m unittest tests.test_rdma_package -v && grep -qi 'odinlink' host/rdma/ab-protocol.md && grep -q '7.2.2' host/rdma/attended-bringup.md && grep -qi 'wire-fallback' host/rdma/attended-bringup.md"
+          ]
         }
       ],
       "dependencies": [],
@@ -408,12 +431,12 @@
     {
       "id": "cp-weights",
       "kind": "checkpoint",
-      "title": "Checkpoint: stage the workload checkpoint onto both nodes",
+      "title": "Checkpoint: re-stage the workload checkpoint onto both nodes (2026-08-30 revision: the fleet's local-models sync pruned both staged trees on 08-29 — the artifact has no catalog row — so this must re-copy ~185.6 GB per node; runs after the attended coordinator reboot)",
       "argv": [
         "bash",
         "scripts/stage-weights-both.sh"
       ],
-      "runtimeMaxSec": 10800,
+      "runtimeMaxSec": 14400,
       "dependencies": []
     },
     {
@@ -482,7 +505,7 @@
         "bash",
         "bench/run-matrix.sh"
       ],
-      "runtimeMaxSec": 14400,
+      "runtimeMaxSec": 21600,
       "dependencies": [
         "cp-tp2",
         "bench-harness"
@@ -502,6 +525,60 @@
         "cp-bench",
         "morning-ledger",
         "catalog-handoff"
+      ]
+    },
+    {
+      "id": "usb4stream-bench",
+      "kind": "implementation",
+      "title": "Author the wedge-safe stream-primitive first-light bench, its receipts bound, and the transport decision memo",
+      "goal": "Author (never run — the dead-last checkpoint runs it) a wedge-safe first-light benchmark of the in-tree USB4 stream primitive, as transport-decision evidence for the morning. Deliverables: (1) bench/usb4stream-bench.py — one file serving both roles (coordinator role is the default; peer role via --role peer --dev PATH; the peer is launched by streaming this same file over the control wire: ssh worker with the script on stdin, never a copy). Non-negotiable mechanics, each existing because an open/close storm against a mismatched peer wedges router hop tables and already darkened rail 0 once: (a) NEVER hardcode a numbered device node and never write a digit directly after the word tbstream anywhere in the file — the numbering is asymmetric across the twins and the coordinator carries PEERLESS cable-B groups at the low indices, where a blocking open waits forever; resolve on EACH node as: the rail netdev carrying the 10.99.0.0/30 address, then readlink /sys/class/net/RAIL/device, then the parent xdomain, then the sibling service whose key attribute is stream, then the configfs group fn0's index attribute, then the device node /dev/tbstream suffixed with that index; require BOTH ends' fn0 configfs groups to exist before any open. (b) Exactly ONE open attempt per side, ever, blocking, under a 30 s alarm; any failure after that point: close whatever is open, kill the ssh child, write the receipt, exit — never reopen, never retry, never write configfs (read ring_size and throttling only). (c) Idempotence guard: if results/receipts/usb4stream.json already exists, exit 0 immediately WITHOUT touching any device — this is what makes harness retries storm-free by construction. (d) Skip preconditions, checked in this order BEFORE any device access, each producing receipt status pass with data.outcome 'skipped:REASON' and exit 0: (i) the pair serve is up — the API answers on the coordinator, or podman reports the serving container running on either node (check the worker over the control wire) — outcome 'skipped:serve-up-on-shared-cable': the stream device shares cable A with the serving rails and a wedge would take the campaign's headline deliverable down, so this bench runs ONLY on an idle cable; (ii) ping -c1 -W2 to the rail peer fails — outcome 'skipped:rail-peer-unreachable'; (iii) either end's fn0 configfs group is missing — outcome 'skipped:configfs-group-missing'. Record data.serve_up true or false in EVERY receipt including skips. (e) Fixed schedule, no adaptivity, no retries: 50 iterations of 4 KiB ping-pong warmup (discarded); RTT at 64, 4096, 16384, 65536 bytes times 500 iterations with p50 and p99 per size; the allreduce-shaped simultaneous exchange at 8192, 16384, 65536 bytes times 500 (both sides write N bytes then read N bytes — ring 1024 times 4 KiB frames buffers this safely); throughput 256 MiB each direction; under 90 s wall total, whole run under a global timeout. (f) The receipt at results/receipts/usb4stream.json: one JSON object, step 'usb4stream', status ALWAYS 'pass' — this bench is evidence-gathering, not a campaign claim, so a mid-run abort is typed as data.outcome 'aborted:PHASE:ERRNO' rather than a fail status that would redden every later gate run; data carries outcome, per-size rtt and exchange p50/p99 fields, throughput both directions, ring_size and throttling as read from configfs, resolved device paths on both ends, open_count (assert exactly 1 per side), serve_up, and loop 'python' for honesty about syscall-loop overhead. (2) scripts/receipts-verify.py: add a 'usb4stream' entry to the BOUNDS table — outcome 'ok' requires open_count 1 and all schedule fields present; 'skipped:' and 'aborted:' outcomes require their reason text and pass. (3) docs/USB4STREAM-TRANSPORT.md — the decision memo: why the collective-library net-plugin route is REJECTED for the latency goal (it sits under the library's proxy and protocol stack, HopID scarcity shared with the network paths forces a multiplexer over one or two long-lived streams, and comm teardown on every serve restart is exactly the open/close pattern the wedge hazard forbids; 3-5 attended days to a fragile prototype, 2-4 attended weeks to overnight-trustworthy); why the real path is a 2-4 attended-day port of the reference doorbell-plus-progress-thread allreduce (the 105 microsecond reference bar) from verbs onto the stream device's read and write, with the receive path run by the progress thread; the morning trigger criteria (banked exchange p50 at 8-16 KiB at or under about 40 microseconds AND the bench matrix showing allreduce-dominated decode); the note that after a healthy night the first real run happens attended in the morning AFTER the pair is torn down (the serve-up skip is deliberate); and a drafted-not-filed issue body for the port. (4) tests/test_usb4stream_bench.py: py-compile both edited python files, assert the no-hardcoded-device-node invariant (no digit after tbstream in the bench source), assert the idempotence guard and the serve-up skip are present, and exercise the receipts checker's three outcome branches with synthetic receipt dicts. Boundaries: touch only bench/usb4stream-bench.py, docs/USB4STREAM-TRANSPORT.md, scripts/receipts-verify.py, and tests/.",
+      "deliveredBehaviors": [
+        "A single-open, skip-safe, retry-proof bench that can bank the first stream-primitive exchange numbers without being able to storm the hop tables, and that refuses to touch the device while the pair is serving on the same cable",
+        "The morning reads one memo that settles plugin-versus-port with trigger criteria instead of re-deliberating"
+      ],
+      "readFirst": {
+        "specSections": [
+          "specs/flashnext/spec.md#r6",
+          "specs/flashnext/spec.md#r7",
+          "specs/flashnext/evidence/dotfiles-observed.md"
+        ],
+        "styleReferences": [
+          "scripts/receipts-verify.py",
+          "bench/run-matrix.sh"
+        ]
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "usb4stream-bench-sound",
+          "description": "Bench and checker compile, resolution is configfs-driven with no hardcoded device node, the serve-up skip exists, the memo exists, and the tests pass.",
+          "argv": [
+            "bash",
+            "-euc",
+            "python3 -m py_compile bench/usb4stream-bench.py scripts/receipts-verify.py && grep -q 'configfs' bench/usb4stream-bench.py && grep -q 'usb4stream' scripts/receipts-verify.py && ! grep -qE '/dev/tbstream[0-9]' bench/usb4stream-bench.py && grep -q 'serve-up-on-shared-cable' bench/usb4stream-bench.py && test -s docs/USB4STREAM-TRANSPORT.md && python3 -m unittest tests.test_usb4stream_bench -v"
+          ]
+        }
+      ],
+      "dependencies": [],
+      "conflictDomains": [
+        "bench/usb4stream-bench.py",
+        "docs/USB4STREAM-TRANSPORT.md",
+        "scripts/receipts-verify.py",
+        "tests"
+      ]
+    },
+    {
+      "id": "cp-usb4stream",
+      "kind": "checkpoint",
+      "title": "Checkpoint: single-open stream-primitive first light (dead-last; runs only when the serve is already down — a live pair on the shared cable is a typed skip; one open attempt ever; never a fail-status receipt)",
+      "argv": [
+        "bash",
+        "-euc",
+        "timeout 900 python3 bench/usb4stream-bench.py"
+      ],
+      "runtimeMaxSec": 1200,
+      "dependencies": [
+        "cp-close",
+        "usb4stream-bench"
       ]
     }
   ]

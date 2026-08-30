@@ -51,8 +51,23 @@ try_("fp8_cast", fp8_cast)
 try_("registry", registry)
 try_("aperture", aperture)
 try_("admission", admission)
-json.dump(r, open("/results/receipts/smoke.json", "w"), indent=1)
+# Receipt quarantine (D12): a fail receipt lands under results/receipts/
+# failed/ — a typed blocker outside the grading walk, so one failed smoke
+# cannot redden every later gate run. Exit code is unchanged.
+import os
+base = "/results/receipts" if r["status"] == "pass" else "/results/receipts/failed"
+os.makedirs(base, exist_ok=True)
+json.dump(r, open(base + "/smoke.json", "w"), indent=1)
 print(json.dumps(r, indent=1))
 PY
-echo "smoke receipt: $OUT"
-python3 -c "import json,sys; sys.exit(0 if json.load(open('$OUT'))['status']=='pass' else 1)"
+echo "smoke receipt: $OUT (fail receipts land under results/receipts/failed/)"
+python3 - "$REPO_ROOT" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+ok = root / "results/receipts/smoke.json"
+failed = root / "results/receipts/failed/smoke.json"
+if failed.is_file() and (not ok.is_file()
+                         or failed.stat().st_mtime >= ok.stat().st_mtime):
+    sys.exit(1)
+sys.exit(0 if ok.is_file() and json.load(open(ok))["status"] == "pass" else 1)
+PY

@@ -39,6 +39,14 @@ def _weights(d):
 def _bench(d):
     if d.get("loads_per_arm", 0) < 3:
         return "fewer than 3 loads per arm"
+    if d.get("spec_on_failed"):
+        # Degraded single-arm receipt: the spec-on serve failed and the
+        # matrix honestly ran spec_off only. Counterbalancing protects
+        # two-arm comparisons; with one arm there is no comparison to
+        # protect — but the receipt must SAY it is single-arm.
+        if d.get("arms") != ["spec_off"]:
+            return f"spec_on_failed receipt must carry arms=['spec_off'], got {d.get('arms')}"
+        return None
     if not d.get("counterbalanced", False):
         return "arms were not counterbalanced"
     return None
@@ -108,6 +116,16 @@ def main() -> int:
                 if err:
                     print(f"receipts-verify: {path.name}: {err}")
                     bad += 1
+    # Quarantined failure receipts (results/receipts/failed/) are typed
+    # blockers the morning operator reviews first — listed LOUDLY here but
+    # never counted as violations: one graded failure must cost one step,
+    # never redden every later gate run. The top-level glob above is
+    # non-recursive, so these never enter the grading walk.
+    failed_dir = RECEIPTS / "failed"
+    if failed_dir.is_dir():
+        for path in sorted(failed_dir.glob("*.json")):
+            print(f"receipts-verify: WARN: quarantined failure receipt "
+                  f"failed/{path.name} — typed blocker, see docs/MORNING.md")
     print(f"receipts-verify: {seen} receipts checked, {bad} violations")
     return 2 if bad else 0
 

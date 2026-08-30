@@ -28,21 +28,9 @@ worker() { ssh "$FN_WORKER_HOST" "$@"; }
 
 # --- 1. reap stranded serve processes, then gate on zero residue -------------
 # The serve process tree is visible from the host /proc even when it runs
-# inside a podman container, so we reap host-side on both nodes. The bracket
-# in the pattern keeps pgrep from matching itself.
-reap_serve_node() {
-  local pids
-  pids="$(pgrep -f 'bin/[v]llm serve' || true)"
-  if [ -n "$pids" ]; then
-    echo "fn-cluster-up: reaping stranded serve pids: $(echo $pids | tr '\n' ' ')" >&2
-    kill -TERM $pids 2>/dev/null || true
-    sleep 3
-    pids="$(pgrep -f 'bin/[v]llm serve' || true)"
-    [ -z "$pids" ] || kill -KILL $pids 2>/dev/null || true
-    sleep 1
-  fi
-  pgrep -f 'bin/[v]llm serve' | wc -l
-}
+# inside a podman container, so we reap host-side on both nodes.
+# reap_serve_node is defined in fn-env.sh (shared with bench/run-matrix.sh's
+# per-arm cross-node reap).
 
 log "reap: coordinator"
 residue="$(reap_serve_node)"
@@ -59,8 +47,12 @@ fi
 log "reap gate passed: zero residue on both nodes"
 
 # --- 2. containers on both nodes ---------------------------------------------
-# The env file is built PER NODE by sourcing fn-env.sh there: the rail list
-# is computed from each node's own `ip -br addr`, never copied across.
+# The env file is built PER NODE by sourcing fn-env.sh there — EXCEPT the
+# transport decision: NCCL_SOCKET_IFNAME and FN_TRANSPORT_RUNG are decided
+# ONCE, on the coordinator, and injected into the worker's sourcing as
+# pre-set literals (fn-env's ${VAR:-...} form honours them). Without this a
+# single lost ICMP packet on one node could bootstrap the two ranks on
+# different interfaces.
 ENV_FILTER='^(FN_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
 
 mkdir -p "$FN_STATE_DIR"
@@ -68,10 +60,16 @@ LOCAL_ENV_FILE="$FN_STATE_DIR/container-env.list"
 ( set -a; source "$SCRIPT_DIR/fn-env.sh" >/dev/null; env ) \
   | grep -E "$ENV_FILTER" | LC_ALL=C sort > "$LOCAL_ENV_FILE"
 
+log "image: ensure the worker carries $FN_IMAGE"
+bash "$SCRIPT_DIR/fn-image-ship.sh"
+
 REMOTE_TMP="$(worker 'mktemp -d')"
 worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
 worker "mkdir -p '$FN_STATE_DIR' \
-  && ( set -a; source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
+  && ( set -a; \
+       NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME' \
+       FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG' \
+       source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
      | grep -E '$ENV_FILTER' | LC_ALL=C sort > '$REMOTE_TMP/env.list'"
 
 run_container() {  # $1 = env-file path; runs on the local node
@@ -150,6 +148,17 @@ esac
 # --max-num-batched-tokens 2048: QSA indexer workspace scales with
 # batch × context (ds4 precedent: 512 at 512K ctx). Start 2048 at 256K,
 # drop to 512 on OOM.
+#
+# --kv-cache-memory-bytes: pin the KV/state pool at 12 GiB (FN_KV_CACHE_BYTES,
+# fn-env.sh) so the GDN slot pool + paged KV land deterministically inside
+# the P11 residency bound instead of floating with gpu-memory-utilization.
+#
+# --max-num-seqs: cap the GDN state slots (fn-env.sh FN_MAX_SEQS; the engine
+# default of 256 preallocates ~14 GiB/rank).
+#
+# FN_SPEC_ARGS is EMPTY by default: first light is spec-off (the identity
+# oracle's baseline). Speculative promotion is a morning env flip, e.g.
+# FN_SPEC_ARGS="--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'".
 log "serving $FN_MODEL_DIR as '$FN_SERVED_NAME' at TP=2 (compiled, text-only)"
 podman exec -d "$FN_CONTAINER" bash -c "exec vllm serve $FN_MODEL_DIR \
   --served-model-name $FN_SERVED_NAME \
@@ -161,6 +170,9 @@ podman exec -d "$FN_CONTAINER" bash -c "exec vllm serve $FN_MODEL_DIR \
   --max-model-len $FN_MAX_CTX \
   --limit-mm-per-prompt '{\"image\":0,\"video\":0}' \
   --max-num-batched-tokens ${FN_MAX_BATCHED_TOKENS:-2048} \
+  --kv-cache-memory-bytes ${FN_KV_CACHE_BYTES:-12884901888} \
+  --max-num-seqs ${FN_MAX_SEQS:-32} \
+  ${FN_SPEC_ARGS:-} \
   > '$FN_STATE_DIR/serve.log' 2>&1"
 
 # Wait for reality, not for the target's word (the fleet's library-reachable
