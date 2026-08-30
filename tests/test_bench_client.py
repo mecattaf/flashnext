@@ -118,6 +118,25 @@ class BenchClientSeparation(unittest.TestCase):
         self.assertIsNone(split.queue_wait_s)
         self.assertIsNone(split.prefill_s)
 
+    def test_failed_scrape_is_absence_not_a_lifetime_mean(self):
+        # A failed bracketing scrape reaches the split as None. Differencing a
+        # missing bracket against zero would return the engine's WHOLE-LIFETIME
+        # mean under a column whose name promises this batch — the §4.4 defect
+        # wearing a new column name. Both components must go empty instead.
+        after = self.mod.parse_metrics(_prom_text({
+            self.mod.QUEUE_TIME_METRIC: (100000.0, 5000),
+            self.mod.PREFILL_TIME_METRIC: (4000.0, 5000),
+        }))
+        split = self.mod.split_first_token(None, after)
+        self.assertIsNone(split.queue_wait_s)
+        self.assertIsNone(split.prefill_s)
+        self.assertEqual(split.prefill_source, self.mod.SCRAPE_UNAVAILABLE)
+        # The lifetime means that a zero baseline would have published.
+        self.assertIsNone(self.mod.hist_delta_mean(
+            None, after, self.mod.QUEUE_TIME_METRIC)[0])
+        # A failed POST-scrape is the same honest absence.
+        self.assertIsNone(self.mod.split_first_token(after, None).prefill_s)
+
     def test_parse_metrics_ignores_gauges_and_buckets(self):
         text = (
             "# TYPE vllm:num_requests_running gauge\n"
@@ -153,6 +172,14 @@ class BenchClientFingerprint(unittest.TestCase):
         b = [1, 2, 3, 59]
         self.assertNotEqual(self.mod.fingerprint_of(a),
                             self.mod.fingerprint_of(b))
+
+    def test_empty_completion_has_no_fingerprint(self):
+        # A completion that produced no tokens has nothing to fingerprint.
+        # Hashing the empty sequence would give every silent request one shared
+        # constant digest, which the matrix's divergence analysis would read as
+        # a set of agreeing witnesses that never spoke.
+        self.assertEqual(self.mod.fingerprint_of([]), "")
+        self.assertNotEqual(self.mod.fingerprint_of([1]), "")
 
     def test_fingerprint_never_collides_ids_with_strings(self):
         # Type-tagging: an id sequence cannot collide with a string sequence

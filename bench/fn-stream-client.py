@@ -64,6 +64,10 @@ TTFT_METRIC = "vllm:time_to_first_token_seconds"
 # absent on a given engine build: prefill ~= inference - decode.
 INFERENCE_TIME_METRIC = "vllm:request_inference_time_seconds"
 DECODE_TIME_METRIC = "vllm:request_decode_time_seconds"
+# Recorded as prefill_source when a bracketing scrape failed: the split could
+# not be measured at all, which is a different fact from "the engine does not
+# expose the histogram", and both are different from a number.
+SCRAPE_UNAVAILABLE = "scrape-unavailable"
 
 # A short, neutral prompt for the depth-0 arm. No model-family names (F.5).
 SHORT_PROMPT = "The ledger records what the night proved: "
@@ -119,11 +123,14 @@ CSV_HEADER_COMMENT = """\
 #   total_s           CLIENT-side total request wall time.
 #   completion_tokens server-reported completion token count.
 #   fingerprint       sha256 over the completion's token ids (ints when the
-#                     engine provides them, token pieces otherwise).
+#                     engine provides them, token pieces otherwise). Empty
+#                     when the completion produced no tokens.
 #   spec_config       speculative-decoding configuration active for the arm.
 # queue_wait_s and prefill_s are load-level server measurements shared by every
 # row of a load; ttft_s/total_s/decode_s/fingerprint are per-request.
-# Empty means "the engine did not expose this metric" — an honest absence.
+# Empty means the number was not measured — the engine did not expose the
+# metric, or a bracketing scrape failed. An honest absence, never a proxy: a
+# scrape failure is NEVER differenced against zero to yield a lifetime mean.
 """.format(q=QUEUE_TIME_METRIC, p=PREFILL_TIME_METRIC)
 
 
@@ -174,14 +181,22 @@ def scrape_metrics(metrics_url: str, timeout: float = 30.0) -> Dict[str, HistRea
         return parse_metrics(resp.read().decode(errors="ignore"))
 
 
-def hist_delta_mean(before: Mapping[str, HistReading],
-                    after: Mapping[str, HistReading],
+def hist_delta_mean(before: Optional[Mapping[str, HistReading]],
+                    after: Optional[Mapping[str, HistReading]],
                     metric: str) -> tuple:
     """Per-request mean of ``metric`` over the requests landed between scrapes.
 
     Returns ``(mean_or_None, sample_count)``. ``None`` means the engine never
     exposed the metric (honest absence) or no new sample landed.
+
+    Either bracket may be ``None``, meaning *that scrape failed*. A missing
+    bracket is NOT a zero baseline: differencing against zero would return the
+    engine's whole-lifetime mean and publish it under a column whose name
+    promises this batch. That is precisely the §4.4 defect in a new costume, so
+    a failed scrape yields an honest absence instead.
     """
+    if before is None or after is None:
+        return (None, 0)
     a = after.get(metric)
     if a is None:
         return (None, 0)
@@ -204,8 +219,8 @@ class FirstTokenSplit:
     prefill_source: str  # which metric / derivation produced prefill_s
 
 
-def split_first_token(before: Mapping[str, HistReading],
-                      after: Mapping[str, HistReading],
+def split_first_token(before: Optional[Mapping[str, HistReading]],
+                      after: Optional[Mapping[str, HistReading]],
                       queue_metric: str = QUEUE_TIME_METRIC,
                       prefill_metric: str = PREFILL_TIME_METRIC) -> FirstTokenSplit:
     """Separate scheduler queue wait from prompt processing.
@@ -214,7 +229,14 @@ def split_first_token(before: Mapping[str, HistReading],
     after the batch — never from the client's first-token series. If the direct
     prefill histogram is absent we fall back to ``inference - decode`` means;
     if even that is unavailable, prefill is reported as an honest ``None``.
+
+    ``None`` for either bracket means that scrape failed; both columns then go
+    empty and ``prefill_source`` says so, rather than reporting a lifetime mean.
     """
+    if before is None or after is None:
+        return FirstTokenSplit(queue_wait_s=None, prefill_s=None,
+                               queue_samples=0, prefill_samples=0,
+                               prefill_source=SCRAPE_UNAVAILABLE)
     queue_wait, queue_samples = hist_delta_mean(before, after, queue_metric)
     prefill, prefill_samples = hist_delta_mean(before, after, prefill_metric)
     source = prefill_metric
@@ -241,7 +263,14 @@ def fingerprint_of(sequence) -> str:
     never collide with a string sequence. Under greedy sampling an identical
     completion reproduces an identical fingerprint; a divergent completion
     (the QSA-gather signature the matrix hunts for) changes it.
+
+    An empty sequence returns the empty string, not the sha256 of nothing: a
+    completion that produced no tokens has nothing to fingerprint, and every
+    such request sharing one constant digest would read to the divergence
+    analysis as a fleet of agreeing witnesses that never spoke.
     """
+    if not sequence:
+        return ""
     h = hashlib.sha256()
     for item in sequence:
         if isinstance(item, int):
@@ -532,12 +561,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Bracket the measured batch with metrics scrapes. Convergence probes ran
     # BEFORE the first scrape, so the delta covers only the measured requests.
+    before: Optional[Dict[str, HistReading]]
+    after: Optional[Dict[str, HistReading]]
     try:
         before = scrape_metrics(metrics_url)
     except Exception as e:  # noqa: BLE001 - honest absence, not a crash
         print(f"fn-stream-client: pre-scrape failed ({e}); queue/prefill will "
               f"be empty", file=sys.stderr)
-        before = {}
+        before = None
     records = run_concurrent(args.api, args.model, prompt, args.max_tokens,
                              args.temperature, args.concurrency, args.requests,
                              args.timeout)
@@ -546,7 +577,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as e:  # noqa: BLE001
         print(f"fn-stream-client: post-scrape failed ({e}); queue/prefill will "
               f"be empty", file=sys.stderr)
-        after = {}
+        after = None
 
     split = split_first_token(before, after)
 
