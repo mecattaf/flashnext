@@ -194,7 +194,14 @@ reap_serve_node() {
     [ -z "$pids" ] || kill -KILL $pids 2>/dev/null || true
     sleep 1
   fi
-  pgrep -f 'bin/[v]llm serve' | wc -l
+  # Count the residue WITHOUT letting the healthy case abort the caller:
+  # `pgrep` exits 1 when nothing matches, and under the caller's
+  # `set -o pipefail` a bare `pgrep | wc -l` propagates that 1 out of the
+  # command substitution, so `set -e` killed fn-cluster-up.sh at its FIRST
+  # reap on exactly the nights nothing was stranded — silently, before the
+  # gate could log a word. Branch on the pid list instead of piping.
+  pids="$(pgrep -f 'bin/[v]llm serve' || true)"
+  if [ -z "$pids" ]; then echo 0; else echo "$pids" | wc -l; fi
 }
 
 # --- estate hygiene -------------------------------------------------------------

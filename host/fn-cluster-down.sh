@@ -31,7 +31,11 @@ reap_serve_node() {
     pids="$(pgrep -f 'bin/[v]llm serve' || true)"
     [ -z "$pids" ] || kill -KILL $pids 2>/dev/null || true
   fi
-  pgrep -f 'bin/[v]llm serve' | wc -l
+  # Same pipefail-safe residue count as fn-env.sh's copy: teardown does not
+  # run under `set -e` today, but the two helpers must not drift into
+  # different failure semantics.
+  pids="$(pgrep -f 'bin/[v]llm serve' || true)"
+  if [ -z "$pids" ]; then echo 0; else echo "$pids" | wc -l; fi
 }
 
 log "reap serve: coordinator"
