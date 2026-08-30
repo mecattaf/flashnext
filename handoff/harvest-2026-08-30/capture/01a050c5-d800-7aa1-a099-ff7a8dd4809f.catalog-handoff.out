@@ -1,0 +1,1 @@
+TALLY_FINAL_MESSAGE={"baseRev":"bfd358b923b35a4a80dad2163d7e8ec16aaf81b6","conflictDomains":["handoff"],"domainsRequired":false,"head":"513ae39f7533899143c79b08291c17f9091b02ea","ownedPaths":["handoff/README.md","handoff/catalog-row.patch"],"taskId":"catalog-handoff"}

@@ -1,0 +1,27 @@
+INFO 08-30 10:47:25 [triton_moe.py:177] TritonExperts: admitting block-FP8 fused MoE (QuantKey(f8e4m3fn,scale(f32,static,GroupShape(row=128, col=128)),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,GroupShape(row=1, col=128)),symmetric)) on gfx1151 via in-kernel bf16 upcast; this device has no FP8 matrix unit. Set FN_FP8_MOE=0 to restore the stock refusal.
+{
+ "step": "smoke",
+ "status": "pass",
+ "ts": "2026-08-30T10:47:18",
+ "data": {
+  "arch": {
+   "gcn_arch": "gfx1151",
+   "on_cdna": false,
+   "supports_fp8_stock_predicate": false
+  },
+  "fp8_cast": {
+   "e4m3fn_alloc_and_cast": true
+  },
+  "registry": {
+   "model_arch_registered": true
+  },
+  "aperture": {
+   "ttm_pages_limit": 33554432
+  },
+  "admission": {
+   "fp8_block_moe_admitted": true,
+   "reason": "boolean predicate (patches/0008)"
+  }
+ }
+}
+smoke receipt: /home/tom/.local/state/tally/campaigns/flashnext/flashnext/28c6234f6f10/cp-smoke/results/receipts/smoke.json (fail receipts land under results/receipts/failed/)

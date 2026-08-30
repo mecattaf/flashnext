@@ -1,0 +1,1 @@
+TALLY_FINAL_MESSAGE={"allowlist":["scripts/make-proxy.sh","scripts/run-proxy.sh","tests","results/receipts/proxy.json"],"allowlistBasis":"declared","checkedPaths":3,"ownershipRan":true,"taskId":"proxy-tooling"}

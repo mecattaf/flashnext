@@ -1,0 +1,1 @@
+spec-build-driver: proposal.acceptanceCriteria[2].argv[2] must be a non-empty string without control characters

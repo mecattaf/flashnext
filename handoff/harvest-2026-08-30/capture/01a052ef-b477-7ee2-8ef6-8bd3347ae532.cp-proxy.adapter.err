@@ -1,0 +1,5 @@
+make-proxy: existing checkpoint at /var/tmp/flashnext-proxy matches the signature; rebuild skipped
+make-proxy:   (FN_PROXY_FORCE=1 to rebuild)
+run-proxy: serving /var/tmp/flashnext-proxy as 'flashnext-proxy' on :1236 (single node, piecewise)
+run-proxy: proxy receipt status=pass
+run-proxy: proxy receipt: /home/tom/.local/state/tally/campaigns/flashnext/flashnext/afc08f273f17/cp-proxy/results/receipts/proxy.json (fail receipts land under results/receipts/failed/)

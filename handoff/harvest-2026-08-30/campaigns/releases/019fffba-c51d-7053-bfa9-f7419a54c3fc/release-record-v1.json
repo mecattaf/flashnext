@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "registrationId": "019fffba-c51d-7053-bfa9-f7419a54c3fc",
+  "campaign": "epsilon",
+  "repository": "mecattaf/tally.nix",
+  "worklist": "silent-factory-worklists/epsilon.json",
+  "version": "0.0.0+20260814092311.8b45283",
+  "revision": "8b45283856d714f8ff1687e102b0237de851d86c",
+  "planSha256": "sha256:c78fc039cd2930d6e21e0544cf62cead5599f5733ce8b724de93168fe582e061",
+  "steps": {
+    "tag": true,
+    "releaseNotes": true,
+    "artifacts": true
+  }
+}

@@ -1,0 +1,100 @@
+==> packaging tests first
+usb4stream-bench: receipt /tmp/tmpy6c6x66r/usb4stream.json outcome=aborted:rtt:EIO
+==> rootfs overlay stage (instruments land here when present)
+==> caches
+==> podman build flashnext:dev
+STEP 1/23: FROM docker.io/ubuntu:24.04
+STEP 2/23: ARG ROCM_WHL=https://repo.amd.com/rocm/whl-multi-arch/
+--> Using cache d5257090b1224c897c2608ad60420ad6af3c4f2646b7459e573402215939a8a9
+--> d5257090b122
+STEP 3/23: ARG TORCH_PIN="torch==2.13.0+rocm7.14.0"
+--> Using cache a5a3ea77d9cfa2f7a85efaaabe8899c203022a004bdc7889761828edf45aec68
+--> a5a3ea77d9cf
+STEP 4/23: ARG TORCHVISION_PIN="torchvision==0.28.0+rocm7.14.0"
+--> Using cache d4b021e37b31d8f2626f95928c7925528d7c197add463a29aedb4719d5d415f4
+--> d4b021e37b31
+STEP 5/23: ARG TRITON_PIN="triton==3.8.0+git4cff872c.rocm7.14.0"
+--> Using cache 96de71d0f88318406b35da23776b581039f6f9e4780f1af53e7dd2e68c14a54e
+--> 96de71d0f883
+STEP 6/23: ARG ROCM_DEVEL_PIN="rocm-sdk-devel==7.14.0"
+--> Using cache 875cf1f93265ee59c011bec58ce910d0d992592d754b2120d8968bfb0ddeee8d
+--> 875cf1f93265
+STEP 7/23: ARG DEVICE_PINS="amd-torch-device-gfx1151==2.13.0+rocm7.14.0 amd-torchvision-device-gfx1151==0.28.0+rocm7.14.0 rocm-sdk-device-gfx1151==7.14.0"
+--> Using cache 4bc94de7841d2aee219618e51965017785d1efc20214623271f0b9062e2c0605
+--> 4bc94de7841d
+STEP 8/23: ENV DEBIAN_FRONTEND=noninteractive
+--> Using cache f647f8f04bbf828898bc5a88b335f23b4f6abbb7040a6619b914f87c9b3b00c9
+--> f647f8f04bbf
+STEP 9/23: RUN apt-get update && apt-get install -y --no-install-recommends         python3.12 python3.12-venv python3.12-dev         git ca-certificates curl         build-essential cmake ninja-build ccache         cargo rustc libnuma-dev     && rm -rf /var/lib/apt/lists/*
+--> Using cache 14db0b4f9dbcaec431883e3d8460e56bf3992e273540025d257077545afc83f7
+--> 14db0b4f9dbc
+STEP 10/23: RUN python3.12 -m venv /opt/venv
+--> Using cache 191b93aed45ec504ed5b8d1cf42198f1ec490861e0744fd9b3fb5e66e7870cad
+--> 191b93aed45e
+STEP 11/23: ENV VIRTUAL_ENV=/opt/venv     PATH=/opt/venv/bin:$PATH     PIP_NO_CACHE_DIR=0     PIP_DISABLE_PIP_VERSION_CHECK=1     CCACHE_DIR=/root/.ccache     HOME=/root
+--> Using cache 943676182a59b8a254be4c058ca7048da3371419b0c72fa431c7fc5f29e5d2e6
+--> 943676182a59
+STEP 12/23: RUN pip install --index-url ${ROCM_WHL} --extra-index-url https://pypi.org/simple         setuptools wheel packaging "setuptools-scm>=8.0" setuptools-rust
+--> Using cache ccfa81680ad56309d06b82b396373bde4247c7806169fa6dafe4d83a9d6196c3
+--> ccfa81680ad5
+STEP 13/23: RUN pip install --index-url ${ROCM_WHL}         ${TORCH_PIN} ${TORCHVISION_PIN} ${TRITON_PIN} ${ROCM_DEVEL_PIN} ${DEVICE_PINS}
+--> Using cache 8630c5691be71d821acc63a9cf0922f02dfc6a05c853e7cf28f30228b20abb02
+--> 8630c5691be7
+STEP 14/23: ARG VLLM_REPO=https://github.com/mecattaf/vllm
+--> Using cache e92c49289cd7d7d2744be0224b63990fa9362f22ab7b5f208de982621ec10163
+--> e92c49289cd7
+STEP 15/23: ARG VLLM_BRANCH=flashnext
+--> Using cache 92baca4abb81c1dfeccccee4f72bccc30a887056d7c69a4cb3a19fdccae79ccc
+--> 92baca4abb81
+STEP 16/23: ENV VLLM_TARGET_DEVICE=rocm     PYTORCH_ROCM_ARCH=gfx1151
+--> Using cache d409827816421568871398cdf32d878453a1832922a7d70b68dcc5081b61c3e7
+--> d40982781642
+STEP 17/23: RUN if [ ! -d /opt/vllm/.git ]; then         git clone --depth 1 --branch flashnext https://github.com/mecattaf/vllm /opt/vllm;     fi     && git -C /opt/vllm rev-parse HEAD > /opt/flashnext-fork-commit     && git -C /opt/vllm rev-parse --abbrev-ref HEAD >> /opt/flashnext-fork-commit
+--> Using cache 37c3cc6ef94c6f30a9826695832081f5338f55f72f84a2a5455491cb666ed1b6
+--> 37c3cc6ef94c
+STEP 18/23: RUN pip install -e /opt/vllm --no-build-isolation
+--> Using cache 4aec36a4c4a7af97de80c027e005af0b2a01d44a5fb02f0bab75112aa5785f14
+--> 4aec36a4c4a7
+STEP 19/23: COPY container/rootfs/ /opt/venv/lib/python3.12/site-packages/
+--> 45dfac39f7ba
+STEP 20/23: RUN mkdir -p /opt/flashnext && python3 - <<'PY' (import json, time, importlib.metadata as md...)
+--> 4b38335ebe38
+STEP 21/23: RUN cat /opt/flashnext/build-info.json
+{
+ "lane": "container",
+ "image": "flashnext:dev",
+ "fork_repo": "https://github.com/mecattaf/vllm",
+ "fork_commit": "bdb6f0420e797de9266de593326368091085cc3b",
+ "fork_branch": "flashnext",
+ "torch": "2.13.0+rocm7.14.0",
+ "torchvision": "0.28.0+rocm7.14.0",
+ "triton": "3.8.0+git4cff872c.rocm7.14.0",
+ "rocm_sdk_core": "7.14.0",
+ "amd_torch_device_gfx1151": "2.13.0+rocm7.14.0",
+ "gpu_target": "gfx1151",
+ "built_at": "2026-08-30T06:55:42+0000"
+}--> 8e979777c4e9
+STEP 22/23: WORKDIR /opt/vllm
+--> e7af18a2be5c
+STEP 23/23: CMD ["bash"]
+COMMIT flashnext:dev
+--> c90bab7bbd04
+Successfully tagged localhost/flashnext:dev
+c90bab7bbd0439ca80ac6af580f8deee30d3fdc8476f3c6cd7a26a6a8585643e
+==> reading build identity from the image
+{
+ "lane": "container",
+ "image": "flashnext:dev",
+ "fork_repo": "https://github.com/mecattaf/vllm",
+ "fork_commit": "bdb6f0420e797de9266de593326368091085cc3b",
+ "fork_branch": "flashnext",
+ "torch": "2.13.0+rocm7.14.0",
+ "torchvision": "0.28.0+rocm7.14.0",
+ "triton": "3.8.0+git4cff872c.rocm7.14.0",
+ "rocm_sdk_core": "7.14.0",
+ "amd_torch_device_gfx1151": "2.13.0+rocm7.14.0",
+ "gpu_target": "gfx1151",
+ "built_at": "2026-08-30T06:55:42+0000"
+}
+build receipt (pass): /home/tom/.local/state/tally/campaigns/flashnext/flashnext/6c99a84fe635/cp-build/results/receipts/build.json
+==> flashnext:dev built; receipt: /home/tom/.local/state/tally/campaigns/flashnext/flashnext/6c99a84fe635/cp-build/results/receipts/build.json

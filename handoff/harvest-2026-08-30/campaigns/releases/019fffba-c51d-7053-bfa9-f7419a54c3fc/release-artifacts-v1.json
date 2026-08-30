@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "campaign": "epsilon",
+  "repository": "mecattaf/tally.nix",
+  "version": "0.0.0+20260814092311.8b45283",
+  "revision": "8b45283856d714f8ff1687e102b0237de851d86c",
+  "closingSummary": {
+    "reference": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/complete",
+    "objectId": "975ed5526acc3989114fdef9f22f2267369ab130"
+  },
+  "gateProof": {
+    "taskId": "chapter-gate",
+    "reference": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/checkpoint/chapter-gate-20ca5b9771009ce378ce674c615fcf4feb80fcfe88b50ed805916175df70dc4f/8b45283856d714f8ff1687e102b0237de851d86c",
+    "revision": "8b45283856d714f8ff1687e102b0237de851d86c"
+  },
+  "artifacts": [
+    {
+      "kind": "integration",
+      "locator": "refs/heads/tally/epsilon-campaign-019fffba-c51d-7053-bfa9-f7419a54c3fc/integration",
+      "objectId": "8b45283856d714f8ff1687e102b0237de851d86c"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/port-shared-campaign-folds-3d1a5385e5a43523",
+      "objectId": "a4e9b830ac354e490698414260c4a3fcc6b8d6a3"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/reseat-driver-suite-e0c10c7a6ad4607d",
+      "objectId": "28e7cd5822ac3ae9301c44b2d36f7df8ed5f5f59"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/driver-crate-skeleton-8798d86f36cb7e28",
+      "objectId": "48bd1e92d5b4ef5e4d49175d211f576cc56cfbe5"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/release-plan-render-bc0e2fda5d05e3d7",
+      "objectId": "ff64dc8c923300d47b2ec2ffaf93d19c314790e0"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/declare-canonical-derived-3c3e8d632edf8f1e",
+      "objectId": "b29ed1b165367f3257f7a623aab39121a6e9114c"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/commit-validator-lint-history-c1940fd751b9d991",
+      "objectId": "8882fb416c3bff58c1d652cbbd1f0a6c8e24be12"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/node-role-typing-beccc6bc23218067",
+      "objectId": "6fc77f427ba1f6b49dc104fad034389e631c0779"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/port-worktrees-a58e1a7712fd0209",
+      "objectId": "5bf5ae578382b7268fb9345c9eca6c925020ee45"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/release-execute-idempotent-54bcb532fb81bc70",
+      "objectId": "d8ea5b616c9ee3e6245fea4529091090723a61b4"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/journal-scope-0a96c5906774fb4c",
+      "objectId": "c5fa6c5b9b1803354dc466b1ee377f45e1caf618"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/probe-lifecycle-5371be850ba46258",
+      "objectId": "57d4ff8717bd9a95c0afc167b02e61cc2810c661"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/adversarial-release-b68c64f98eab7219",
+      "objectId": "3e59edba1b3f67f4267f7a54c4be2985c35d979f"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/tally-rebuild-verb-2f4748c1b207c3f2",
+      "objectId": "7bce36ee9a174856fa31d810426b575827970d10"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/argsschema-single-source-8978899135cb2fd9",
+      "objectId": "af8324df9f1ba8ad120bec35d45c26edbba30943"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/port-fold-half-0d927291caf694e8",
+      "objectId": "cca8ab158a479a1eb1e701b755d33c90dfa6a101"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/port-effect-half-210c2fcb35ad04f8",
+      "objectId": "4be8a2f870b211ec203f1bff7125441719fa31a9"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/rust-driver-seam-proof-f7a526c4734d40fc",
+      "objectId": "5a465c454b3443228d7d71cd9dd674c0ec6fe1fa"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/delete-python-driver-3cec436de7dc35ab",
+      "objectId": "928614741a9866598ddc124ca88d7978c303e6e6"
+    },
+    {
+      "kind": "task-commit",
+      "locator": "refs/heads/tally/epsilon-campaign-019ffdeb-506c-70f2-978e-029acf871fb8/schema-example-stderr-lint-e70c68eceff2d1d9",
+      "objectId": "5aa96621ee5b7edfc4104139bb370fbe7820c919"
+    },
+    {
+      "kind": "checkpoint",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/checkpoint/chapter-gate-20ca5b9771009ce378ce674c615fcf4feb80fcfe88b50ed805916175df70dc4f/8b45283856d714f8ff1687e102b0237de851d86c",
+      "objectId": "8b45283856d714f8ff1687e102b0237de851d86c"
+    },
+    {
+      "kind": "closing-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/complete",
+      "objectId": "975ed5526acc3989114fdef9f22f2267369ab130"
+    },
+    {
+      "kind": "archived-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/archive/eps0-complete",
+      "objectId": "e2eb07386d0a55e8749211852d302a3907355426"
+    },
+    {
+      "kind": "archived-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/archive/eps0-quiescent",
+      "objectId": "604dc3e4143695bc02cfb36090ef176545d9418e"
+    },
+    {
+      "kind": "archived-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/archive/eps1-complete",
+      "objectId": "1a269d38cafc7703491dfeed8baf96059589a636"
+    },
+    {
+      "kind": "archived-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/archive/eps1-quiescent",
+      "objectId": "c4e601f65340355f3aeed64d834f9345b0bb3ccc"
+    },
+    {
+      "kind": "archived-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/archive/eps2-complete",
+      "objectId": "5bc2760dc0595b06532d0f870b76d9968b6ca03d"
+    },
+    {
+      "kind": "archived-summary",
+      "locator": "refs/tally/spec-build/v1/34af00568cc43499aa8bcc35/summary/archive/eps2-quiescent",
+      "objectId": "5c0d5df6f545e26d989312b67e50eec1b82ce8bf"
+    },
+    {
+      "kind": "attempt-receipts",
+      "locator": "/home/tom/.local/state/tally/campaigns/attempt-receipts/epsilon/attempt-receipts-v1.jsonl",
+      "sha256": "sha256:cbb7d9eb0c6c9c53609dd3303f622af0ddefb65725d38c87e77e99fefa23a404",
+      "bytes": 24707
+    }
+  ]
+}

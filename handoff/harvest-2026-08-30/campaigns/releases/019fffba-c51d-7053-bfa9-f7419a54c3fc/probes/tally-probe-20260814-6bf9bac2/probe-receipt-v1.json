@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "mode": "probe",
+  "status": "failed",
+  "sourceRepository": "mecattaf/tally.nix",
+  "probeRepository": "mecattaf/tally-probe-20260814-6bf9bac2",
+  "version": "0.0.0+20260814092311.8b45283",
+  "startedAt": "2026-08-14T10:48:54Z",
+  "completedAt": "2026-08-14T10:49:04Z",
+  "expiredRepositoriesDeleted": 0,
+  "repositoryCreated": true,
+  "releaseComplete": true,
+  "teardownComplete": false,
+  "releaseRecord": "/home/tom/.local/state/tally/campaigns/releases/019fffba-c51d-7053-bfa9-f7419a54c3fc/probes/tally-probe-20260814-6bf9bac2/release-record-v1.json",
+  "receipt": "/home/tom/.local/state/tally/campaigns/releases/019fffba-c51d-7053-bfa9-f7419a54c3fc/probes/tally-probe-20260814-6bf9bac2/probe-receipt-v1.json",
+  "failure": "tearing down the campaign release probe repository through gh exited exit status: 1: HTTP 403: Must have admin rights to Repository. (https://api.github.com/repos/mecattaf/tally-probe-20260814-6bf9bac2) This API operation needs the \"delete_repo\" scope. To request it, run: gh auth refresh -h github.com -s delete_repo"
+}

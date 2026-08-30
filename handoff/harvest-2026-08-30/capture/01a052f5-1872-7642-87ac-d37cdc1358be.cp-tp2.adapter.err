@@ -1,0 +1,5 @@
+fn-env: rail thunderbolt0 absent on this node; not listed
+fn-env: rail thunderbolt1 absent on this node; not listed
+fn-env: WARNING: no Thunderbolt rail is listable; TERMINAL FALLBACK to the 5GbE wire enp191s0 (degraded, receipted)
+run-tp2: preflight
+ssh: connect to host 10.99.9.2 port 22: No route to host

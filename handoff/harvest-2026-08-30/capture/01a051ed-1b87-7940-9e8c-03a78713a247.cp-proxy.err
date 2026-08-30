@@ -1,0 +1,5 @@
+make-proxy: building the proxy checkpoint at /var/tmp/flashnext-proxy (layers=4 experts=8 block=128x128 split=4 gen=1)
+Traceback (most recent call last):
+  File "<stdin>", line 406, in <module>
+  File "<stdin>", line 239, in main
+AttributeError: 'tuple' object has no attribute 'items'

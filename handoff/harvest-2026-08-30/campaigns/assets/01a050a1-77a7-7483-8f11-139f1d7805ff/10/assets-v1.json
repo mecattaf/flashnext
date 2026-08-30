@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "flow": {
+    "kind": "nixStore",
+    "output": "/nix/store/b4zr2yn0g468l54z7ama277k8apk7yji-tally-0.1.0"
+  },
+  "driver": {
+    "kind": "nixStore",
+    "output": "/nix/store/qn4948z1dgkw8ddw13619pm28d35llyd-spec-build-driver-0.1.0"
+  }
+}

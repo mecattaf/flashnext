@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "registrationId": "01a0483d-42a5-7913-9e4b-cca7d2f96c2d",
+  "campaign": "theta",
+  "repository": "mecattaf/tally.nix",
+  "worklist": "silent-factory-worklists/theta.json",
+  "version": "0.0.0+20260828185430.3a7cb2c",
+  "revision": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+  "planSha256": "sha256:34acb07d3f49ec5cd021ea4d9bc6bc9f8745b8cbe9c12037bccaa9da0f5f2c36",
+  "plan": {
+    "schemaVersion": 2,
+    "mode": "plan",
+    "campaign": "theta",
+    "registrationId": "01a0483d-42a5-7913-9e4b-cca7d2f96c2d",
+    "repository": "mecattaf/tally.nix",
+    "worklist": "silent-factory-worklists/theta.json",
+    "version": "0.0.0+20260828185430.3a7cb2c",
+    "revision": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+    "integrationRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/integration",
+    "closingSummary": {
+      "reference": "refs/tally/spec-build/v1/92c7c68836b9e7dbe8b735aa/5a94195db0afa9b5a10e95cc55cc6a3e8473536cab9ceedd1aab99126077087f/summary/complete",
+      "objectId": "1f8bb2b93e847ef0980534b02ca9bd4aa08d23de"
+    },
+    "completionProofs": [
+      {
+        "taskId": "rolling-contract",
+        "commit": "60184d09fe57231bd23e7daad9cdd655ddd9e30c",
+        "oracle": "exact"
+      },
+      {
+        "taskId": "merge-doctrine",
+        "commit": "edb5b8d7e4b1d0734043d8193d55215eabd52760",
+        "oracle": "exact"
+      },
+      {
+        "taskId": "charter-retirement",
+        "commit": "52df1378d471736b6cd234f4b3cde46c5a5dca33",
+        "oracle": "exact"
+      },
+      {
+        "taskId": "conformance-bar-move",
+        "commit": "06e06817ad4d852e241906a315bf8cd412d7878b",
+        "oracle": "exact"
+      },
+      {
+        "taskId": "operator-skill-amend",
+        "commit": "4ab7c40cc9ab1410eb18b25f7362d5e6d5cd4e6c",
+        "oracle": "exact"
+      },
+      {
+        "taskId": "residue-sweep",
+        "commit": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+        "oracle": "exact"
+      }
+    ],
+    "releaseNotes": [
+      {
+        "taskId": "rolling-contract",
+        "commit": "60184d09fe57231bd23e7daad9cdd655ddd9e30c",
+        "sourceRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/rolling-contract-e31af29abb5fbf65",
+        "sourceCommit": "cdf57c370ca8b5fa032587d5fefa8ec4ecaac1b1",
+        "header": "theta: adopt the rolling release model in RELEASING, CHANGELOG, README",
+        "type": "other",
+        "breaking": false,
+        "summary": "Adopt the rolling release model in RELEASING.md, CHANGELOG.md, and README.md"
+      },
+      {
+        "taskId": "merge-doctrine",
+        "commit": "edb5b8d7e4b1d0734043d8193d55215eabd52760",
+        "sourceRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/merge-doctrine-0d54f95fc8ee6625",
+        "sourceCommit": "a6919ad4708a4ac296707d3ceff6d72a95f716af",
+        "header": "merge-doctrine: name the #523 hand-commit exception in Merge control",
+        "type": "other",
+        "breaking": false,
+        "summary": "CONTRIBUTING.md merge-control: name the ruled hand-commit exception (#523)"
+      },
+      {
+        "taskId": "charter-retirement",
+        "commit": "52df1378d471736b6cd234f4b3cde46c5a5dca33",
+        "sourceRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/charter-retirement-835c3db963c0cd7c",
+        "sourceCommit": "af4f547b281c3143f025f86f2d69f309e2954e04",
+        "header": "docs: retire the closed campaign charters behind the pinned-link archival pattern",
+        "type": "other",
+        "breaking": false,
+        "summary": "Retire the closed campaign charters: ETA.md, ZETA.md, EPSILON-EXTENSION.md, zeta-learnings/"
+      },
+      {
+        "taskId": "conformance-bar-move",
+        "commit": "06e06817ad4d852e241906a315bf8cd412d7878b",
+        "sourceRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/conformance-bar-move-bd5f1efdb926a18f",
+        "sourceCommit": "f5887a7399608889600774bee89eeb72e6955d0d",
+        "header": "conformance-bar-move: Move doc/final-conformance-bar.md into the doc/src book",
+        "type": "other",
+        "breaking": false,
+        "summary": "Move doc/final-conformance-bar.md into the doc/src book where living prose belongs"
+      },
+      {
+        "taskId": "operator-skill-amend",
+        "commit": "4ab7c40cc9ab1410eb18b25f7362d5e6d5cd4e6c",
+        "sourceRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/operator-skill-amend-4d8b8652b0845f92",
+        "sourceCommit": "e064a673799c6586737a23b3224b250344d7b4f2",
+        "header": "operator-skill-amend: Fold the campaign field notes into skills/campaign-operator and document the lane-branch sweep",
+        "type": "other",
+        "breaking": false,
+        "summary": "Fold the campaign field notes into skills/campaign-operator and document the lane-branch sweep"
+      },
+      {
+        "taskId": "residue-sweep",
+        "commit": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+        "sourceRef": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/residue-sweep-5b38991ab0acf597",
+        "sourceCommit": "ab6c9214ece6c20b878d55f2211c3da4ea479a12",
+        "header": "residue-sweep: Delete closed-session residue: aug9-pass/, aug12-campaign-prep/, closed worklists, six dead doc/*.md",
+        "type": "other",
+        "breaking": false,
+        "summary": "Delete closed-session residue: aug9-pass/, aug12-campaign-prep/, closed worklists, six dead doc/*.md"
+      }
+    ],
+    "gateProof": {
+      "taskId": "theta-gate",
+      "reference": "refs/tally/spec-build/v1/92c7c68836b9e7dbe8b735aa/checkpoint/theta-gate-5a94195db0afa9b5a10e95cc55cc6a3e8473536cab9ceedd1aab99126077087f/3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+      "revision": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d"
+    },
+    "artifacts": [
+      {
+        "kind": "integration",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/integration",
+        "objectId": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d"
+      },
+      {
+        "kind": "task-commit",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/rolling-contract-e31af29abb5fbf65",
+        "objectId": "cdf57c370ca8b5fa032587d5fefa8ec4ecaac1b1"
+      },
+      {
+        "kind": "task-commit",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/merge-doctrine-0d54f95fc8ee6625",
+        "objectId": "a6919ad4708a4ac296707d3ceff6d72a95f716af"
+      },
+      {
+        "kind": "task-commit",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/charter-retirement-835c3db963c0cd7c",
+        "objectId": "af4f547b281c3143f025f86f2d69f309e2954e04"
+      },
+      {
+        "kind": "task-commit",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/conformance-bar-move-bd5f1efdb926a18f",
+        "objectId": "f5887a7399608889600774bee89eeb72e6955d0d"
+      },
+      {
+        "kind": "task-commit",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/operator-skill-amend-4d8b8652b0845f92",
+        "objectId": "e064a673799c6586737a23b3224b250344d7b4f2"
+      },
+      {
+        "kind": "task-commit",
+        "locator": "refs/heads/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/residue-sweep-5b38991ab0acf597",
+        "objectId": "ab6c9214ece6c20b878d55f2211c3da4ea479a12"
+      },
+      {
+        "kind": "checkpoint",
+        "locator": "refs/tally/spec-build/v1/92c7c68836b9e7dbe8b735aa/checkpoint/theta-gate-5a94195db0afa9b5a10e95cc55cc6a3e8473536cab9ceedd1aab99126077087f/3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+        "objectId": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d"
+      },
+      {
+        "kind": "closing-summary",
+        "locator": "refs/tally/spec-build/v1/92c7c68836b9e7dbe8b735aa/5a94195db0afa9b5a10e95cc55cc6a3e8473536cab9ceedd1aab99126077087f/summary/complete",
+        "objectId": "1f8bb2b93e847ef0980534b02ca9bd4aa08d23de"
+      },
+      {
+        "kind": "archived-summary",
+        "locator": "refs/tally/spec-build/v1/92c7c68836b9e7dbe8b735aa/cb7c0c84dcc7ce95cc21942ba3d1d99b9ea3ba292651d9a8454ff8021ca234a2/summary/complete",
+        "objectId": "4be46545d99e44584be729ba143c46736c1bcbcb"
+      },
+      {
+        "kind": "attempt-receipts",
+        "locator": "/home/tom/.local/state/tally/campaigns/attempt-receipts/theta/attempt-receipts-v1.jsonl",
+        "sha256": "sha256:2d8c72b02c6ed9858c786b22294db06bda7a444608a3befef41e26ea9414d12e",
+        "bytes": 10775
+      }
+    ],
+    "digest": {
+      "schemaVersion": 1,
+      "campaign": "theta",
+      "repository": "mecattaf/tally.nix",
+      "outcome": "complete",
+      "source": {
+        "path": "silent-factory-worklists/theta.json",
+        "sha256": "sha256:5a94195db0afa9b5a10e95cc55cc6a3e8473536cab9ceedd1aab99126077087f",
+        "revision": "2476a8923f29a2014415ce0b74ad908dd8975915"
+      },
+      "baseRevision": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+      "taskCount": 7,
+      "merged": [
+        {
+          "taskId": "rolling-contract",
+          "title": "Adopt the rolling release model in RELEASING.md, CHANGELOG.md, and README.md",
+          "pullRequest": "local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/rolling-contract-e31af29abb5fbf65",
+          "mergeCommit": "60184d09fe57231bd23e7daad9cdd655ddd9e30c"
+        },
+        {
+          "taskId": "merge-doctrine",
+          "title": "CONTRIBUTING.md merge-control: name the ruled hand-commit exception (#523)",
+          "pullRequest": "local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/merge-doctrine-0d54f95fc8ee6625",
+          "mergeCommit": "edb5b8d7e4b1d0734043d8193d55215eabd52760"
+        },
+        {
+          "taskId": "charter-retirement",
+          "title": "Retire the closed campaign charters: ETA.md, ZETA.md, EPSILON-EXTENSION.md, zeta-learnings/",
+          "pullRequest": "local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/charter-retirement-835c3db963c0cd7c",
+          "mergeCommit": "52df1378d471736b6cd234f4b3cde46c5a5dca33"
+        },
+        {
+          "taskId": "conformance-bar-move",
+          "title": "Move doc/final-conformance-bar.md into the doc/src book where living prose belongs",
+          "pullRequest": "local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/conformance-bar-move-bd5f1efdb926a18f",
+          "mergeCommit": "06e06817ad4d852e241906a315bf8cd412d7878b"
+        },
+        {
+          "taskId": "operator-skill-amend",
+          "title": "Fold the campaign field notes into skills/campaign-operator and document the lane-branch sweep",
+          "pullRequest": "local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/operator-skill-amend-4d8b8652b0845f92",
+          "mergeCommit": "4ab7c40cc9ab1410eb18b25f7362d5e6d5cd4e6c"
+        },
+        {
+          "taskId": "residue-sweep",
+          "title": "Delete closed-session residue: aug9-pass/, aug12-campaign-prep/, closed worklists, six dead doc/*.md",
+          "pullRequest": "local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/residue-sweep-5b38991ab0acf597",
+          "mergeCommit": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d"
+        }
+      ],
+      "checkpoints": [
+        {
+          "taskId": "theta-gate",
+          "title": "Checkpoint: full gate ladder plus the final conformance bar over all six theta tasks",
+          "revision": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d"
+        }
+      ],
+      "blocked": [],
+      "outstanding": [],
+      "steering": [],
+      "retries": [],
+      "deferrals": [],
+      "warnings": []
+    },
+    "campaignSummary": "### Campaign complete\n\nSettled 7 of 7 task(s) against durable merge/checkpoint facts.\nWorklist `sha256:5a94195db0afa9b5a10e95cc55cc6a3e8473536cab9ceedd1aab99126077087f` at `2476a8923f29a2014415ce0b74ad908dd8975915`.\n\n#### Merged\n\n- `rolling-contract` — Adopt the rolling release model in RELEASING.md, CHANGELOG.md, and README.md (local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/rolling-contract-e31af29abb5fbf65)\n- `merge-doctrine` — CONTRIBUTING.md merge-control: name the ruled hand-commit exception (#523) (local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/merge-doctrine-0d54f95fc8ee6625)\n- `charter-retirement` — Retire the closed campaign charters: ETA.md, ZETA.md, EPSILON-EXTENSION.md, z... (local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/charter-retirement-835c3db963c0cd7c)\n- `conformance-bar-move` — Move doc/final-conformance-bar.md into the doc/src book where living prose be... (local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/conformance-bar-move-bd5f1efdb926a18f)\n- `operator-skill-amend` — Fold the campaign field notes into skills/campaign-operator and document the ... (local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/operator-skill-amend-4d8b8652b0845f92)\n- `residue-sweep` — Delete closed-session residue: aug9-pass/, aug12-campaign-prep/, closed workl... (local://mecattaf/tally.nix/tally/theta-campaign-01a0483d-42a5-7913-9e4b-cca7d2f96c2d/residue-sweep-5b38991ab0acf597)\n\n#### Checkpoints passed\n\n- `theta-gate` — Checkpoint: full gate ladder plus the final conformance bar over all six thet... at `3a7cb2c9f470275a1226a558ca2bf8aeca50563d`\n"
+  },
+  "completionProofs": [
+    {
+      "taskId": "rolling-contract",
+      "commit": "60184d09fe57231bd23e7daad9cdd655ddd9e30c",
+      "oracle": "exact"
+    },
+    {
+      "taskId": "merge-doctrine",
+      "commit": "edb5b8d7e4b1d0734043d8193d55215eabd52760",
+      "oracle": "exact"
+    },
+    {
+      "taskId": "charter-retirement",
+      "commit": "52df1378d471736b6cd234f4b3cde46c5a5dca33",
+      "oracle": "exact"
+    },
+    {
+      "taskId": "conformance-bar-move",
+      "commit": "06e06817ad4d852e241906a315bf8cd412d7878b",
+      "oracle": "exact"
+    },
+    {
+      "taskId": "operator-skill-amend",
+      "commit": "4ab7c40cc9ab1410eb18b25f7362d5e6d5cd4e6c",
+      "oracle": "exact"
+    },
+    {
+      "taskId": "residue-sweep",
+      "commit": "3a7cb2c9f470275a1226a558ca2bf8aeca50563d",
+      "oracle": "exact"
+    }
+  ],
+  "steps": {
+    "tag": true,
+    "releaseNotes": true,
+    "artifacts": true
+  }
+}

@@ -1,0 +1,56 @@
+{
+ "step": "proxy",
+ "status": "pass",
+ "ts": "2026-08-30T15:56:05",
+ "data": {
+  "checkpoint": "/var/tmp/flashnext-proxy",
+  "image": "flashnext:dev",
+  "tensor_parallel_size": 1,
+  "served": true,
+  "finite_logits": true,
+  "clean_shutdown": true,
+  "serve_exit_code": "0",
+  "completion_tokens": 16,
+  "logprobs_returned": 16,
+  "greedy": true,
+  "table_gpu_resident_bytes": 0,
+  "ple_mmap_engaged": true,
+  "ple_mmap_log_lines": 5,
+  "serve_env": {
+   "VLLM_PLE_MMAP": "1",
+   "PYTHONHASHSEED": "0",
+   "PYTORCH_HIP_ALLOC_CONF": "expandable_segments:True",
+   "VLLM_ROCM_APU_UNIFIED_MEMORY": null
+  },
+  "serve_args": [
+   "vllm",
+   "serve",
+   "/proxy",
+   "--served-model-name",
+   "flashnext-proxy",
+   "--host",
+   "0.0.0.0",
+   "--port",
+   "1236",
+   "--tensor-parallel-size",
+   "1",
+   "--gpu-memory-utilization",
+   "0.6",
+   "--max-model-len",
+   "4096",
+   "--limit-mm-per-prompt",
+   "{\"image\":0,\"video\":0}",
+   "--max-num-batched-tokens",
+   "2048",
+   "--max-num-seqs",
+   "8",
+   "-cc.cudagraph_mode=PIECEWISE"
+  ],
+  "exec_mode": "piecewise",
+  "gpu_memory_utilization": 0.6,
+  "multimodal_limit": {
+   "image": 0,
+   "video": 0
+  }
+ }
+}

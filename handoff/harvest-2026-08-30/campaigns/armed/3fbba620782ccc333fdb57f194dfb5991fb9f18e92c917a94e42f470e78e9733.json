@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 4,
+  "registrationId": "01a050a1-77a7-7483-8f11-139f1d7805ff",
+  "worklistPattern": "silent-factory-worklists/flashnext.json",
+  "codeRepository": "mecattaf/flashnext",
+  "checkout": "/home/tom/mecattaf/flashnext",
+  "baseBranch": "main",
+  "remote": "origin",
+  "armedAt": "2026-08-30T10:37:03.025121163+00:00",
+  "armSerial": 10,
+  "approvedGraphDigest": "sha256:b498c7e28cea633b96a7b890a4c7b5916a693e899d1477704fcdb904c7690017",
+  "localActor": "uid:1000",
+  "allowedActors": [
+    "local"
+  ],
+  "lastObservation": "sha256:753efd41bbd3f4734478f48579985561cc6ead246d403219cf13c6293b211cf8",
+  "flow": "/nix/store/b4zr2yn0g468l54z7ama277k8apk7yji-tally-0.1.0/share/tally/flows/spec-build.js",
+  "driver": "/nix/store/qn4948z1dgkw8ddw13619pm28d35llyd-spec-build-driver-0.1.0/bin/spec-build-driver",
+  "workspaceRoot": "/home/tom/.local/state/tally/campaigns/flashnext"
+}

@@ -1,0 +1,1 @@
+TALLY_FINAL_MESSAGE={"baseRev":"c06bb797203af3e2e4132de232c0f7d3d019d392","conflictDomains":["container/rootfs","tests"],"domainsRequired":false,"head":"a66b6a9ee21e707951a59d96ed36b434ba8be370","ownedPaths":["tests/RECONCILE-instruments-2026-08-30.md"],"taskId":"instruments"}

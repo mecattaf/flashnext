@@ -1,0 +1,11 @@
+verify-fork: ok   - base 8e4e036a311604800334989485b4ee23925956da in history
+verify-fork: ok   - admission kill-switch FN_FP8_MOE present
+verify-fork: ok   - fused-MoE fp8 upcast plumbing present
+verify-fork: ok   - amd tree imports the mmap module
+verify-fork: ok   - amd tree carries the FP8 embedding dequant
+verify-fork: ok   - mmap module relocated to common/
+verify-fork: ok   - 46012 wave32 LDS fix
+verify-fork: ok   - 40963 APU memory accounting
+verify-fork: ok   - 51511 skinny GEMM disabled on this GPU
+verify-fork: ok   - 46110 KFD topology detection
+verify-fork: fork commits past base: 12 ; mirrored patches: 12
