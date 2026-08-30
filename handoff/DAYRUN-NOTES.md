@@ -128,3 +128,8 @@ head, which advances via lane commits only — proxy-tooling's rev-2 lane
 (6e81834) carried the fixes into the proven chain. Daemon restarted 09:35
 after the pass scheduler stalled on a dcal calendar-sync collision (09:07
 pass passed but projected nothing; weights verified intact both nodes).
+
+Addendum 10:11: cp-weights DONE on proven head 6e81834 (purity saga closed).
+Stale quiescent summary ref made subsequent passes fail ("summary/quiescent
+disagrees with this outcome"); retired via `tally flow supersede` (successor
+01a051b9-538a, reason operator). Steers 7/8 answered inbox holds 47/43.
