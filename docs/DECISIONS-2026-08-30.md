@@ -843,3 +843,83 @@ actually is, and which happens to *relax* the transport ceiling ~2.5×), and
 banks the measurements that unlock every faster transport tomorrow. The socket
 benchmark this run produces is not a consolation prize; it is literally the
 ticket that opens the verbs A/B and prices the stream port.
+
+---
+
+## Appendix A — a community prediction, and what our evidence says about it
+
+Posted by another operator running the same dual Strix Halo setup, 2026-08-30:
+
+> it remains to be seen how much of a performance difference there is between
+> the various RDMA methods.
+> My guess is: No difference between RoCEv2 and Infiniband.
+> Small difference to RMDA via USB4 (both implementations, thunderbolt-stream
+> and odinlink)
+
+**Verdict: well-calibrated, and our evidence quantifies it — with one taxonomy
+correction that changes what the second sentence is even asking.**
+
+**A.1 "No difference between RoCEv2 and Infiniband" — agreed, and on this
+hardware the question is close to moot.** Both encapsulations ride the *same*
+NHI: the same three DMA rings per controller, the same HopID paths, the same
+interrupt moderation. RoCEv2's UDP/IP framing costs header bytes and a little
+CPU; at our 5 KB decode payloads serialization is ~1 µs on a 40 Gbps link
+(§2.7), so the delta lands far below the noise of the doorbell and interrupt
+path that actually dominates. The verb encapsulation is not where the
+microseconds live on this silicon.
+
+**A.2 The correction: `thunderbolt_stream` is not an RDMA implementation.**
+Grouping it with odinlink as "both implementations" of RDMA-via-USB4 conflates
+two genuinely different primitives, and the difference is the whole reason it
+earned a separate deliberation here (§5):
+
+| | odinlink / strix-rdma | thunderbolt_stream |
+|---|---|---|
+| primitive | ibverbs RDMA — queue pairs, memory registration, one-sided writes | a reliable, ordered, 4 KiB-framed **byte pipe** over raw NHI DMA rings |
+| copies | zero-copy into registered memory | **one kernel copy per direction** (`copy_page_from_iter` / `copy_page_to_iter`) |
+| ceiling | wire-bound | ~841 MB/s per stream at ring 4096 (less at our 1024) |
+| latency measured | — | 14.3 µs RTT @ 64 B, 21.8/25.3 µs p50/p99 @ 4 KB |
+| provenance | out-of-tree, rebuilt per kernel | in-tree, maintainer-owned, documented ABI |
+
+So the honest three-way question is not "which RDMA method" but "verbs versus a
+copying byte pipe versus TCP" — and each has a different answer per op class
+(§5.7): for bulk/prefill the stream loses on bandwidth to both; for the *decode
+allreduce*, which is the actual ceiling, a copying pipe at ~22 µs round trip is
+competitive precisely because that op is latency-bound, not bandwidth-bound.
+
+**A.3 "Small difference" — our evidence agrees, and puts numbers on "small."**
+The one measured end-to-end precedent for RDMA over held TCP on this hardware
+class is **+3.4% decode**; `strix-rdma`'s own author calls NHI verbs
+"effectively identical to TCP v3" and ships TCP in production. That is the
+single most under-appreciated fact in this whole space, and it is why tonight's
+run bets its risk budget on MTP rather than on transport.
+
+**A.4 The reframe worth passing back to that thread: the RDMA method is
+second-order. Three other variables each dominate it.**
+
+1. **C-state hold** — 577 µs → 63–90 µs RTT, an ~8× effect, free, and it
+   applies to *every* transport including plain TCP. Anyone benchmarking
+   transports without holding `/dev/cpu_dma_latency` at 0 on **both** ends is
+   measuring their idle governor, not their interconnect.
+2. **Whether the host sits in the critical path** — the same ibverbs stack
+   measured 228 µs with a host callback and **105 µs** once a doorbell kernel
+   plus a GPU spin-and-add moved the host off it. A 2.2× swing with the
+   transport held constant.
+3. **NHI interrupt moderation** — 8 µs hand-tuned versus ~128 µs stock.
+
+All three are software architecture around the transport, and each is larger
+than the encapsulation choice the prediction is about. The practical
+implication: a shootout between RoCEv2, IB, and USB4 RDMA that doesn't control
+for these three will produce differences that are mostly artifacts of which
+stack happened to be tuned.
+
+**A.5 On the baseline being the consolation prize — it is actually the
+deliverable.** Nobody has published a TP=2 baseline on a dual Strix Halo pair,
+and more pointedly: **TCP-over-thunderbolt0 has never been measured by anyone,
+including us** (§11) — the firewall that blocked it was only just opened. Every
+comparison in the prediction above is currently being made against a number
+that does not exist. Tonight's socket matrix produces it, and it is
+simultaneously the Gate 0 artifact that unlocks our own verbs A/B and the
+denominator the stream port must beat. A measured baseline is not the
+consolation for missing the optimization; it is the precondition that turns
+every subsequent optimization from a guess into a delta.
