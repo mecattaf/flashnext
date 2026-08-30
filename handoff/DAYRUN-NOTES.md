@@ -107,3 +107,24 @@ concurrent 256K streams; --kv-cache-dtype fp8 doubles that) ds4-style.
 | 4 | container-recipe | commit-discipline insurance after ownership failure; layer cache exists |
 | 5 | proxy-tooling | WRONG diagnosis (APU kill-switch) — superseded by 6 |
 | 6 | proxy-tooling | real fix: --limit-mm-per-prompt image/video 0 (vision profiling OOM) |
+
+## Round-2 overnight/morning steer ledger (2026-08-30, registration 01a050a1-77a7)
+
+| seq | task | gist |
+|---|---|---|
+| 1 | instruments | commit-discipline: driver rejects zero-diff squash (tally#622 family); land a reconcile-note commit |
+| 2 | (all) | standing zero-diff note: never conclude "no commit needed" |
+| 3 | (all) | checkpoint purity: receipts in lane commit; checkpoint command must be a pure idempotent validator |
+| 4 | cp-weights | both trees verified staged 185563854698 bytes; validate, don't re-copy |
+| 5 | cp-weights | ANSWER to inbox 40 (diagnosis-unavailable): purity fixed at 9480958; retry authorized |
+| 6 | cp-smoke | ANSWER to inbox 41: probe two-tuple unpack fixed at 7509202 (patches/0008 boolean predicate) |
+
+Repo fixes landed on main during the run: 9480958 (receipt-restore.py purity
+guard, generalizing cp-build's inline contract), 7509202 (smoke admission
+probe), 83b4c73+593142c (rev-2 titles for cp-weights/proxy-tooling to clear
+the 10-lifetime-attempt latch — attempts burned on harness defects, not task
+content). Checkpoint validation runs on the driver's gate-proven integration
+head, which advances via lane commits only — proxy-tooling's rev-2 lane
+(6e81834) carried the fixes into the proven chain. Daemon restarted 09:35
+after the pass scheduler stalled on a dcal calendar-sync collision (09:07
+pass passed but projected nothing; weights verified intact both nodes).
