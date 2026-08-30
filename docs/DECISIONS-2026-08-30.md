@@ -873,7 +873,15 @@ Grouping it with odinlink as "both implementations" of RDMA-via-USB4 conflates
 two genuinely different primitives, and the difference is the whole reason it
 earned a separate deliberation here (§5):
 
-| | odinlink / strix-rdma | thunderbolt_stream |
+> **CORRECTED 2026-08-31 (RUN3-BRIEF §4.6).** The left column below groups
+> `strix-rdma` with odinlink as ibverbs. **It is not ibverbs**, and its authors
+> explicitly reject soft-RoCE. It belongs on the *right* of this table, with
+> `thunderbolt_stream` — it is the project that gets USB4STREAM, it measured
+> **29.0 µs/exchange**, and its 15 patches apply to our kernel and our tree. This
+> single miscategorisation is what suppressed the best transport option we have.
+> Read the row below as **odinlink only**.
+
+| | odinlink (~~/ strix-rdma~~ — see correction above) | thunderbolt_stream |
 |---|---|---|
 | primitive | ibverbs RDMA — queue pairs, memory registration, one-sided writes | a reliable, ordered, 4 KiB-framed **byte pipe** over raw NHI DMA rings |
 | copies | zero-copy into registered memory | **one kernel copy per direction** (`copy_page_from_iter` / `copy_page_to_iter`) |

@@ -67,6 +67,13 @@ map.)*
 ## 4. What is deliberately NOT imported
 
 - **RDMA/tbv anything** (GPL boundary + excluded scope; TCP is the transport of record).
+  > **CORRECTED 2026-08-31 (RUN3-BRIEF §4.5).** The GPL half of this exclusion is
+  > misapplied to the collective. ds4's own `THIRD_PARTY_NOTICES` places
+  > `container/native/tbv_ar2.hip` under **Apache-2.0**. What is GPL-2.0 is the
+  > verbs/kernel stack *underneath* it, not the all-reduce itself. The
+  > **excluded-scope** half stands on its own merits — that is a scheduling
+  > decision, not a licensing one, and it is the one to argue about. Do not cite
+  > a GPL boundary as the reason `tbv_ar2` is not lifted.
 - **aiter** (no CK build for RDNA; its Triton-only path unproven on gfx1151 for our kernels; revisit post-first-light).
 - **nix-strix-halo `.nix` code** (no license), **kyuz0 toolbox shell scripts** (no license on those two repos — method only).
 - **ROCm 10 as the overnight substrate** (wheels *do* exist at `stable.repo.amd.com/rocm/whl-next/` — the earlier "no wheels" ruling probed one directory too shallow, corrected 2026-08-30 in `specs/flashnext/evidence/kyuz0-rocm10.md` §11; and the rocBLAS 5.5→5.6 solution-index breakage is ds4-specific — this fork carries no tuned solution indices, only `solution_index=-1` at `vllm/_aiter_ops.py:714`). Measured by the `rocm10-probe` lane; promotion is a morning act against a known-good probe receipt.

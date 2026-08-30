@@ -111,7 +111,7 @@ read-in-source, not assumed.
    at every boot, rebuild, and sync-service start. Consequences: cp-weights
    is revised to force a re-stage (14400 s budget; the library source path
    measures 86–87 MB/s sequential, ~75–80 min/node), `catalog-handoff` now
-   states plainly that applying `handoff/catalog-row.patch` is what ends
+   states plainly that applying `handoff/catalog-row.patch **[ALREADY APPLIED as of 2026-08-31 — do not apply; the anti-prune row is live at dotfiles/lib/local-models.nix:1116. RUN3-BRIEF §4.1]**` is what ends
    this hazard permanently, and the overnight red lines forbid rebuilds and
    sync-service starts while the campaign runs.
 2. **The worker carries zero podman images.** Nothing in the estate ever
@@ -177,17 +177,40 @@ one node dropped one ICMP packet.
 (2 cables → 4 rails → 4 verbs devices, ~48 Gb/s aggregate) is physically
 unavailable on this NHI — 3 DMA rings per controller means exactly ONE RDMA
 lane per cable (the second lane's `-12` probe error is permanent), and
-decode is *latency*-bound, where aggregation buys nothing. The ds4-vllm
-2-cable split exists to serve a 3,450-line unpublished zero-copy patch this
-repo deliberately does not carry. Cable B stays parked; a two-socket-rail
-aggregation test is a cheap attended morning item.
+decode is *latency*-bound, where aggregation buys nothing.
+
+> **CORRECTED 2026-08-31 (RUN3-BRIEF §4.3, §13.5).** Two claims above were wrong.
+> (a) The patch is **not unpublished** — it is in-repo at
+> `~/Downloads/ds4-vllm/tbv/ibverbs-local.patch`, 3,453 lines across 9 kernel files,
+> against the exact ibverbs pin we already run. The parking decision below followed
+> from that error. (b) **Cable B is not parked-because-unusable** — it is a fully
+> live, peered 2×20 Gb/s link on its own NHI, pinging the worker at 0.107 ms, with an
+> unclaimed stream-device pair, blocked only by a missing static /30 and a firewall
+> trust entry. Device mapping, measured symmetric on both nodes: **cable A (the
+> serving wire) is `/dev/tbstream2`, cable B is `/dev/tbstream0`.** Because cable B
+> shares no NHI, no rings and no IRQ vectors with the serving pair, transport work
+> pointed at it is schedulable *while serving* — which is what makes Track B safe.
 
 **Why the latency war matters less than it looks tonight:** at hidden size
 2560 × 48 layers, a TP=2 decode step issues ~96 small allreduces (~5 KB).
-Against the reference 105 µs custom-verbs bar (`tbv_ar2` in the ds4 estate),
-socket transport costs ~10–29 ms of a 25–50 ms step — second-order next to
-what the MTP arm can win. The structural answer to the allreduce war is the
+The structural answer to the allreduce war is the
 stream-primitive port (below), evaluated with numbers in the morning.
+
+> **CORRECTED 2026-08-31 (RUN3-BRIEF §4.4, §13.2, §16.2).** The 105 µs figure is
+> **disclaimed by its own source** — ds4's in-patch comment at
+> `vllm-upstream.patch:1556-1559` reads *"Per-op latency here is UNMEASURED on the
+> current stack — do not quote a figure without re-running
+> tbv/build-scripts/verify-tbv-perf.sh"*. Any go/no-go computed against 105 µs is
+> computed against a disclaimed number. Use these instead, all measured on this pair:
+> our TCP-on-thunderbolt0 **full-duplex exchange** — which is the shape an all-reduce
+> actually has — is **118–133 µs p50, flat from 4 KiB to 64 KiB** (the 310–315 µs
+> ping-pong number quoted elsewhere is the wrong shape). The only production gfx1151
+> two-node TP deployment measures its tuned RDMA exchange at **112–132 µs** — the same
+> number as our sockets — and profiles transport at **11%** of gate time against **88%**
+> own-GPU compute. Separately, the *gate mechanism* is not free: an in-kernel atomic
+> doorbell into mapped memory costs **4.5 µs/gate** measured here, against **43–45 µs**
+> for an ordered host callback. Price any custom all-reduce as `mechanism + wire`, not
+> as wire alone.
 
 ### MTP (the operator's hard requirement — settled as pure serve-config)
 
@@ -340,7 +363,7 @@ package.
 
 Morning order: read `docs/MORNING.md` → review anything under
 `results/receipts/failed/` (typed blockers, possibly including a deferred
-context probe) → apply `handoff/catalog-row.patch` (permanently ends the
+context probe) → apply `handoff/catalog-row.patch **[ALREADY APPLIED as of 2026-08-31 — do not apply; the anti-prune row is live at dotfiles/lib/local-models.nix:1116. RUN3-BRIEF §4.1]**` (permanently ends the
 weight-prune hazard) → only then any rebuild or model-sync restart →
 attended RDMA fetch-and-build on 7.2.2 (worker first) + A/B per
 `host/rdma/ab-protocol.md`, ONLY if bench.json's transport rung is

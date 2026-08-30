@@ -1,5 +1,26 @@
 # Overseer day-run notes — 2026-08-29 (campaign 01a04c1f, arm 2)
 
+> ## ⚠ CORRECTED 2026-08-31 — READ BEFORE ACTING ON THIS DOCUMENT
+>
+> **`handoff/catalog-row.patch` is ALREADY APPLIED. Do not apply it.** Verified
+> directly: the `flashnext-fp8` anti-prune row is live at
+> `dotfiles/lib/local-models.nix:1116` — its own `notes` field reads *"THIS ROW IS
+> THE ANTI-PRUNE"* — and `git apply --check handoff/catalog-row.patch` now fails.
+> `llama-swap` is `active` on both twins. **The prune hazard is closed.** Every
+> instruction below ordering the operator to apply this patch as a first act is
+> stale, and two of six forensic agents were misled by it.
+>
+> **The TP=2 pre-arm patch is also already applied** (drop `--enforce-eager`, add
+> `--limit-mm-per-prompt`, `--max-num-batched-tokens`). Do not re-apply.
+>
+> **New consequence that is NOT closed:** the deployed prune strips files that
+> `scripts/stage-weights.sh` rsyncs back and byte-counts (`README.md`, `LICENSE`,
+> `.gitattributes`), which makes **cp-weights permanently non-idempotent** — it will
+> re-trigger the checkpoint-purity failure class that ate run 2's budget. Reconcile
+> that before anything forces cp-weights to re-run. See `handoff/RUN3-BRIEF.md` §4.1
+> and §10.0 item 5.
+
+
 Operator-relayed community intel (flashnext#4, #5 — advisories, no scope
 change) plus overseer working notes. This file is overseer memory: it must
 survive session context loss.

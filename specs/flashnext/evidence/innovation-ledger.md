@@ -120,7 +120,7 @@ exist in the tree — `MANIFEST.md:65` prose describes base-image behavior). Wha
 | **Kill-switch grammar** | 40+ `DS4_*` vars enumerated in the dossier; the pattern: tuned path default-on, per-path env off-switch, latched once at import, propagated via the ray prefix | COPY-METHOD |
 | **AGENTS.md bring-up doctrine** | §0.1 "verify these exist; do NOT synthesize them"; gates in order with pass conditions; the de-risk clause | COPY + rewrite for our stack |
 | **THIRD_PARTY_NOTICES structure** | "Nothing redistributed" rows, pins cross-checkable against build scripts; with `tbv/` excluded our tree carries zero GPL | COPY |
-| NOT lifted | `tbv/` (RDMA, GPL boundary), `tbv_ar*` all-reduces, DSpark drafter plumbing, the QSA files (now reference-only), disk-KV tier (deferred — not in the campaign's first scope), `MANIFEST.md:8` (stale — contradicts the Dockerfile) | — |
+| NOT lifted | `tbv/` (RDMA, GPL boundary), `tbv_ar*` all-reduces **[licence ground CORRECTED 2026-08-31: `tbv_ar2.hip` is Apache-2.0 per ds4's THIRD_PARTY_NOTICES, not GPL — see RUN3-BRIEF §4.5; it stays unlifted on scope grounds only]**, DSpark drafter plumbing, the QSA files (now reference-only), disk-KV tier (deferred — not in the campaign's first scope), `MANIFEST.md:8` (stale — contradicts the Dockerfile) | — |
 
 ### 2.2 vLLM PR #53896 (peakcrosser7, `release/qwen38next`) — the model, better than hoped
 
