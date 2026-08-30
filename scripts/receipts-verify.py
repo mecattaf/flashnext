@@ -57,6 +57,69 @@ def _context(d):
         return f"full-context decode ratio {ratio} below the 0.9 bound"
     return None
 
+def _usb4stream(d):
+    """The stream-primitive first-light receipt (bench/usb4stream-bench.py).
+
+    This receipt is EVIDENCE, not a campaign claim: its status is always
+    'pass' and the truth is in data.outcome, which is one of
+
+      ok                     the bench ran; the schedule is fully present
+      skipped:REASON         a precondition refused the run before any
+                             device access (serve-up-on-shared-cable,
+                             rail-peer-unreachable, configfs-group-missing)
+      aborted:PHASE:ERRNO    the single open or a phase after it failed; the
+                             bench closed, reaped, and typed it here rather
+                             than reopening
+
+    Skips and aborts PASS — they are the wedge-safe design working — but they
+    must carry their reason text, so an empty type cannot pose as one.
+    """
+    outcome = d.get("outcome")
+    if not isinstance(outcome, str) or not outcome:
+        return "usb4stream receipt carries no data.outcome"
+    if "serve_up" not in d:
+        return "usb4stream receipt does not record data.serve_up"
+    for prefix in ("skipped:", "aborted:"):
+        if outcome.startswith(prefix):
+            reason = outcome[len(prefix):].strip()
+            if not reason:
+                return f"usb4stream outcome '{outcome}' carries no reason text"
+            return None
+    if outcome != "ok":
+        return f"usb4stream outcome '{outcome}' is not one of ok/skipped:/aborted:"
+    opens = d.get("open_count")
+    if isinstance(opens, dict):
+        if not opens or any(v != 1 for v in opens.values()):
+            return f"usb4stream open_count {opens} is not exactly 1 per side"
+    elif opens != 1:
+        return f"usb4stream open_count {opens} is not exactly 1"
+    for key in ("rtt_us", "exchange_us", "throughput_mb_s", "device"):
+        if not d.get(key):
+            return f"usb4stream 'ok' receipt is missing {key}"
+    for size in (64, 4096, 16384, 65536):
+        if str(size) not in (d.get("rtt_us") or {}):
+            return f"usb4stream 'ok' receipt has no rtt entry at {size} bytes"
+    for size in (8192, 16384, 65536):
+        if str(size) not in (d.get("exchange_us") or {}):
+            return f"usb4stream 'ok' receipt has no exchange entry at {size} bytes"
+    for stat in (d.get("rtt_us") or {}), (d.get("exchange_us") or {}):
+        for size, cell in stat.items():
+            for field in ("p50", "p99"):
+                if (cell or {}).get(field) is None:
+                    return f"usb4stream size {size} is missing {field}"
+    tput = d.get("throughput_mb_s") or {}
+    if len(tput) < 2 or any(v is None for v in tput.values()):
+        return f"usb4stream throughput {tput} does not cover both directions"
+    for key in ("ring_size", "throttling"):
+        if key not in d:
+            return f"usb4stream 'ok' receipt does not record {key} from configfs"
+    if not (d.get("device") or {}).get("coordinator") \
+            or not (d.get("device") or {}).get("peer"):
+        return "usb4stream 'ok' receipt does not resolve a device on both ends"
+    if d.get("loop") != "python":
+        return "usb4stream 'ok' receipt does not state its measurement loop"
+    return None
+
 def _smoke(d):
     ap = (d.get("aperture") or {}).get("ttm_pages_limit")
     if ap is not None and ap != 33554432:
@@ -70,6 +133,7 @@ BOUNDS = {
     "bench": _bench,
     "context": _context,
     "smoke": _smoke,
+    "usb4stream": _usb4stream,
 }
 
 def _handoff_patch_ok() -> str | None:
