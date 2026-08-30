@@ -580,6 +580,42 @@
         "cp-close",
         "usb4stream-bench"
       ]
+    },
+    {
+      "id": "rocm10-probe",
+      "kind": "implementation",
+      "title": "Measure ROCm 10.0.0 viability on a separate image tag, off the critical path, after the bench",
+      "goal": "Measure whether the ROCm 10.0.0 substrate is viable for this fork on this hardware, without touching the 7.14 lane that served the night. Context: a complete aligned gfx1151/cp312 wheel set exists at https://stable.repo.amd.com/rocm/whl-next/ (verified 2026-08-30; wheels dated 2026-08-26; same upstream versions and the SAME triton git hash 4cff872c as the current pins, so the swap is a pure version-literal substitution) — but no upstream anywhere has run this engine on ROCm 10 on gfx1151, and two failure modes are unmeasured: whether ROCm 10's hipcc compiles the fork's HIP sources, and whether its HSA runtime binds to the in-tree KFD on this kernel. This lane answers both as DATA. Build a second image flashnext:rocm10 from the UNMODIFIED container/Containerfile using its existing build ARGs (ROCM_WHL, TORCH_PIN, TORCHVISION_PIN, TRITON_PIN, ROCM_DEVEL_PIN, DEVICE_PINS at container/Containerfile:48-65 — no recipe edit, so the banked container-recipe acceptance stays true): podman build --tag flashnext:rocm10 --file container/Containerfile --build-arg ROCM_WHL=https://stable.repo.amd.com/rocm/whl-next/ --build-arg 'TORCH_PIN=torch==2.13.0+rocm10.0.0' --build-arg 'TORCHVISION_PIN=torchvision==0.28.0+rocm10.0.0' --build-arg 'TRITON_PIN=triton==3.8.0+git4cff872c.rocm10.0.0' --build-arg 'ROCM_DEVEL_PIN=rocm-sdk-devel==10.0.0' --build-arg 'DEVICE_PINS=amd-torch-device-gfx1151==2.13.0+rocm10.0.0 amd-torchvision-device-gfx1151==0.28.0+rocm10.0.0 rocm-sdk-device-gfx1151==10.0.0' . (a prefetched wheel set may exist under ~/.cache/flashnext-wheels/rocm10/). Then, on the coordinator only, run a minimal GPU binding check in that image (--device /dev/kfd --device /dev/dri --security-opt seccomp=unconfined --ipc=host): torch.cuda.is_available(), torch.cuda.get_device_properties(0).gcnArchName, a small fp16 and a small fp8-block matmul, and importing the engine package. Record the ROCm/HSA and KFD versions the runtime reports plus the running kernel release (a green probe on a 7.2.0 coordinator is strong but not conclusive for the pair; a red probe attributable to KFD must be re-checked on 7.2.2 before ROCm 10 is written off — say so in the notes field). Do not load the checkpoint, do not start a server, do not touch the worker. WRITE THE RECEIPT TO results/rocm10-probe.json — NOT under results/receipts/: scripts/receipts-verify.py fails the campaign gate on any fail-status receipt in that directory, and this lane exists to record an outcome, green or red, never to fail the campaign. The receipt carries {step:'rocm10-probe', status, ts, data:{build_ok, compile_seconds, torch, triton, rocm_sdk_core, gcn_arch, cuda_available, matmul_fp16_ok, matmul_fp8_block_ok, engine_import_ok, kernel_release, notes}} with status 'pass' whenever an outcome was recorded. Never remove or retag flashnext:dev; never edit container/, results/receipts/, or the worklist. If the night is running late this lane is the first thing the operator drops. Boundaries: touch only results/rocm10-probe.json.",
+      "deliveredBehaviors": [
+        "By morning the ROCm 10 question is answered with a measured receipt on this exact hardware instead of a guess",
+        "The proven 7.14 image and the whole receipt contract are untouchable by construction"
+      ],
+      "readFirst": {
+        "specSections": [
+          "specs/flashnext/evidence/kyuz0-rocm10.md",
+          "IMPORTS.md"
+        ],
+        "styleReferences": [
+          "container/build.sh"
+        ]
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "rocm10-probe-recorded",
+          "description": "An outcome receipt exists outside the graded receipts dir, the 7.14 image survives untouched, and the receipts gate still passes.",
+          "argv": [
+            "bash",
+            "-euc",
+            "python3 -c \"import json; r=json.load(open('results/rocm10-probe.json')); assert r['step']=='rocm10-probe' and r['status'] and r['ts'] and isinstance(r['data'],dict) and 'build_ok' in r['data']\" && podman image exists localhost/flashnext:dev && python3 scripts/receipts-verify.py"
+          ]
+        }
+      ],
+      "dependencies": [
+        "cp-bench"
+      ],
+      "conflictDomains": [
+        "results/rocm10-probe.json"
+      ]
     }
   ]
 }

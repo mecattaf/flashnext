@@ -13,7 +13,7 @@ here is original work under this repo's Apache-2.0 LICENSE.*
 | torchvision | `0.28.0+rocm7.14.0` | same index | torch 2.13-aligned. |
 | torchaudio | **omitted** | — | Only needed for vLLM audio extras; it is what capped kyuz0's auto-resolved set at torch 2.11.0. We drop the extra instead of downgrading torch. |
 | triton | wheel accompanying the torch set on the same index; fallback: the `pytorch-triton-rocm` wheel torch 2.13.0 declares | same index | Must be < 3.8.0 awareness: the fork's fp8-upcast gate keys on `triton < 3.8` (see PR #52970 pattern below). Record the resolved version in the build receipt. |
-| ROCm userspace | rides inside the torch wheel set (`_rocm_sdk_core`, rocm 7.14.0) | same index | Stable, matches kernel 7.1.4 driver on both nodes. **ROCm 10 is out of scope**: AMD publishes no ROCm 10 gfx1151 torch wheels (`stable.repo.amd.com/rocm/whl-multi-arch/` → 404; verified), and the ROCm 10 rocBLAS bump (5.5.0.cd957402 → 5.6.0.8d1ae90e) invalidates tuned GEMM solution indices. |
+| ROCm userspace | rides inside the torch wheel set (`_rocm_sdk_core`, rocm 7.14.0) | same index | Stable. **ROCm 10 is available but not the overnight substrate**: a complete aligned gfx1151/cp312 set (`torch 2.13.0+rocm10.0.0`, `torchvision 0.28.0+rocm10.0.0`, `triton 3.8.0+git4cff872c.rocm10.0.0`, `rocm-sdk-devel 10.0.0` + device wheels) is published at `https://stable.repo.amd.com/rocm/whl-next/` (verified 2026-08-30; wheels dated 2026-08-26). Same upstream versions and the SAME triton git hash as the 7.14 set, so the swap is a version-literal substitution. Held off the overnight ladder only because no upstream has run this engine on ROCm 10 on gfx1151 and the hipcc-compile and KFD/HSA-binding outcomes are unmeasured — the `rocm10-probe` lane answers both as data behind the bench. |
 
 ## 2. The vLLM fork — `mecattaf/vllm` branch `flashnext`
 
@@ -69,6 +69,6 @@ map.)*
 - **RDMA/tbv anything** (GPL boundary + excluded scope; TCP is the transport of record).
 - **aiter** (no CK build for RDNA; its Triton-only path unproven on gfx1151 for our kernels; revisit post-first-light).
 - **nix-strix-halo `.nix` code** (no license), **kyuz0 toolbox shell scripts** (no license on those two repos — method only).
-- **ROCm 10** (no torch wheels exist for gfx1151; rocBLAS solution-index breakage documented).
+- **ROCm 10 as the overnight substrate** (wheels *do* exist at `stable.repo.amd.com/rocm/whl-next/` — the earlier "no wheels" ruling probed one directory too shallow, corrected 2026-08-30 in `specs/flashnext/evidence/kyuz0-rocm10.md` §11; and the rocBLAS 5.5→5.6 solution-index breakage is ds4-specific — this fork carries no tuned solution indices, only `solution_index=-1` at `vllm/_aiter_ops.py:714`). Measured by the `rocm10-probe` lane; promotion is a morning act against a known-good probe receipt.
 - **Community W4A16/AWQ quants** of this model (they quantize attention + GDN — exactly what the vendor kept precise).
 - **torchaudio** (caps torch at 2.11; not needed).

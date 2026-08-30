@@ -687,3 +687,36 @@ tag follows a perf branch (§2.4).
 - `…/scratchpad/vllmprobe` — scratch repo used for single-commit fetches
 
 No file in `/home/tom/Downloads/*` was modified; only `git fetch` was run there.
+
+## 11. Correction (2026-08-30)
+
+The §3.4 / §9.2 ruling — "no ROCm 10 gfx1151 torch wheels are published" —
+is corrected. The probe behind it checked
+`stable.repo.amd.com/rocm/whl-multi-arch/` (404) and
+`repo.amd.com/rocm/whl-multi-arch/` (capped at 7.14) but never
+`https://stable.repo.amd.com/rocm/whl-next/`, which has carried a complete
+aligned gfx1151/cp312 ROCm 10.0.0 set since 2026-08-26 11:52 GMT (two days
+BEFORE this dossier was written): `torch 2.13.0+rocm10.0.0`,
+`torchvision 0.28.0+rocm10.0.0`, `triton 3.8.0+git4cff872c.rocm10.0.0`,
+`rocm-sdk-{core,devel,libraries} 10.0.0`, plus the gfx1151 device wheels.
+Verified 2026-08-30 by enumerating the index and reading the torch wheel's
+METADATA over HTTP range requests: same upstream versions and the SAME
+triton git hash (`4cff872c`) as the 7.14 set — the fork's triton-version fp8
+gates evaluate identically — and an isomorphic dependency graph, so the
+migration is a version-literal substitution, not a port.
+
+Also corrected: §4.1's rocBLAS 5.5→5.6 solution-index breakage is
+ds4-lineage-specific (hardcoded solution indices in llama.cpp-lineage HIP
+code). The mecattaf/vllm fork at `bdb6f042` carries no tuned solution
+indices — the only `solution_index` reference is `-1` ("library default")
+at `vllm/_aiter_ops.py:714`. Open item §10's rocBLAS⇔ROCm-10 inference is
+moot for this project.
+
+What remains genuinely unknown (and why ROCm 10 is still not the overnight
+substrate): no upstream anywhere has run vLLM on ROCm 10 on gfx1151 —
+kyuz0's own auto-discovery pipeline still resolves 7.14 with zero rocm10
+image tags — so whether ROCm 10's hipcc compiles the fork's HIP sources and
+whether its HSA runtime binds the in-tree KFD on kernel 7.2.x are both
+unmeasured. The `rocm10-probe` worklist lane (2026-08-30) answers both on a
+separate image tag, off the critical path, writing its outcome OUTSIDE
+results/receipts/ so a red probe is data, never a campaign failure.
