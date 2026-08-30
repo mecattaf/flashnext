@@ -64,3 +64,64 @@ Each module carries an adaptation notice header naming the upstream file
 
 Only `container/rootfs/` and `tests/` were in scope; this commit touches one
 new file under `tests/` and nothing else.
+
+---
+
+# Rev 2 — lineage carrier for `ae10e94`, 2026-08-30
+
+Second stateless reconcile attempt for revision `a06d39ee`. The lane was re-run
+on a newer base; the rev-1 note above is itself already committed, so this
+section is the non-empty change this attempt lands (again per the tally#622
+standing note: a zero-diff squash is rejected, and `--allow-empty` does not
+help).
+
+## HEAD at verification
+
+    6e81834  proxy-tooling: Proxy checkpoint builder and single-node first-light runner (rev 2: latch cleared)
+
+`4b1d714` remains an ancestor of this HEAD, and all four deliverable blobs are
+still byte-identical to that landing commit — compared by git object id:
+
+| path | vs `4b1d714` |
+| --- | --- |
+| `container/rootfs/fn_synctrace.py` | identical |
+| `container/rootfs/fn_offload_batch.py` | identical |
+| `container/rootfs/fn_expert_union.py` | identical |
+| `tests/test_instruments.py` | identical |
+
+Nothing in the overlay needed rewriting, so nothing was rewritten.
+
+## Lineage note
+
+The rev-2 title names `ae10e94` ("smoke/proxy: podman run -i so heredocs reach
+python3 -"), which touches `scripts/make-proxy.sh` and `scripts/run-smoke.sh`.
+Both paths sit outside this task's conflict domains (`container/rootfs`,
+`tests`), and `ae10e94` is not an ancestor of this lane's base `6e81834`. This
+lane therefore carries that lineage forward without reproducing the change:
+picking it up here would write outside the stated boundary.
+
+## Acceptance evidence
+
+`instruments-compile-with-notices`, run verbatim, exit 0:
+
+- `python3 -m py_compile` — clean on all three modules.
+- `grep -l 'Adapted from' container/rootfs/fn_*.py | wc -l` — `3`.
+- `python3 -m unittest tests.test_instruments -v` — **Ran 11 tests, OK**.
+
+Repo suite, all eight test modules named explicitly — **Ran 116 tests, OK**.
+(The suite has grown since rev 1's 50; `unittest discover` still cannot be
+pointed at `tests/`, which is a namespace package rather than an importable
+start directory.)
+
+Re-checked alongside acceptance: the `FN_` env surface is intact and complete
+(`FN_PROFILE`, `FN_OFFLOAD_STORE_BATCH_FRAC`, `FN_OFFLOAD_PROMOTE_FRAC`,
+`FN_EXPERT_UNION`, `FN_EU_START`, `FN_EU_CALLS`, `FN_EU_OUT`), the three
+adaptation notices name `AlexKGwyn/ds4-vllm @ a8f620d` and Apache-2.0, and
+`fn_expert_union` still wraps `fused_topk` in
+`vllm/model_executor/layers/fused_moe/router/fused_topk_router.py`. The only
+remaining `DS4_` strings are prose inside the notice headers describing the
+rename; no module reads a `DS4_`-prefixed variable.
+
+## Boundary
+
+This attempt touches exactly one tracked file, `tests/RECONCILE-instruments-2026-08-30.md`.
