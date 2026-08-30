@@ -3,9 +3,14 @@
 Audience: the operator for steps 1–3, then the fresh steering session for
 steps 4–6. Everything repo-side is already committed and pushed; all five
 campaign gates were verified locally green at push time (unittests,
-spec-lint, flake check, fork-verify, receipts-verify). The decisions behind
-this shape live in the README's "Round 2" section; the worklist is
+spec-lint, flake check, fork-verify, receipts-verify). The worklist is
 `silent-factory-worklists/flashnext.json` (18 tasks, append-only revision).
+
+**Read `docs/DECISIONS-2026-08-30.md` before steering.** It is the full
+decision record — why sockets and not verbs tonight, why single-rail cable A,
+how MTP lands, what the USB4STREAM skip means, why ROCm 10 is a probe and not
+the basis, and what each decision's flip-trigger is. The README's "Round 2"
+section summarizes it; steering questions are answered in the record.
 
 ## 1. Reboot the coordinator (operator, attended, ~10–15 min)
 

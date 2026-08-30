@@ -96,6 +96,12 @@ deep-analysis threads, a synthesis, and two adversarial verifiers whose
 blocking findings were folded back in). Everything below is measured or
 read-in-source, not assumed.
 
+> **The full reasoning — every decision with its evidence chain, the dissent
+> it overrode, the alternatives rejected and why, and the exact trigger that
+> would flip it — is preserved in
+> [`docs/DECISIONS-2026-08-30.md`](docs/DECISIONS-2026-08-30.md).** This
+> section is the summary; that file is the record.
+
 ### Findings that reshaped the plan
 
 1. **The staged weights were gone from BOTH nodes.** Round 1's cp-weights
