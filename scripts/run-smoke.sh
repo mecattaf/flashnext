@@ -38,13 +38,18 @@ def aperture():
         "/sys/module/ttm/parameters/pages_limit").read().strip())}
 def admission():
     # The patched oracle must admit the block-FP8 scheme on this GPU.
+    # patches/0008 defines _supports_quant_scheme as a plain boolean
+    # predicate (its pinned tests assert the bare call), not a (ok, why)
+    # tuple — unpack nothing.
     from vllm.model_executor.layers.fused_moe.experts.triton_moe import TritonExperts
     from vllm.model_executor.layers.quantization.utils.quant_utils import (
         kFp8Static128BlockSym, kFp8Dynamic128Sym)
-    ok, why = TritonExperts._supports_quant_scheme(
-        kFp8Static128BlockSym, kFp8Dynamic128Sym) \
-        if hasattr(TritonExperts, "_supports_quant_scheme") else (False, "no hook")
-    return {"fp8_block_moe_admitted": bool(ok), "reason": str(why)}
+    if not hasattr(TritonExperts, "_supports_quant_scheme"):
+        return {"fp8_block_moe_admitted": False, "reason": "no hook"}
+    ok = TritonExperts._supports_quant_scheme(
+        kFp8Static128BlockSym, kFp8Dynamic128Sym)
+    return {"fp8_block_moe_admitted": bool(ok),
+            "reason": "boolean predicate (patches/0008)"}
 
 try_("arch", arch)
 try_("fp8_cast", fp8_cast)
