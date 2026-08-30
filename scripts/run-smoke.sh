@@ -61,6 +61,8 @@ json.dump(r, open(base + "/smoke.json", "w"), indent=1)
 print(json.dumps(r, indent=1))
 PY
 echo "smoke receipt: $OUT (fail receipts land under results/receipts/failed/)"
+# Checkpoint purity: restore the receipt if this re-run measured no change.
+python3 "$REPO_ROOT/scripts/receipt-restore.py" "$REPO_ROOT"
 python3 - "$REPO_ROOT" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])

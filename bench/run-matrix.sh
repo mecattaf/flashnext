@@ -581,4 +581,8 @@ print(f"run-matrix: receipt written to {path} "
       f"arms={measured_arms}, spec_on_failed={spec_on_failed})", flush=True)
 PY
 
+# Checkpoint purity: restore any receipt this re-run rewrote without a
+# measured change (driver re-runs checkpoint commands as pure validators).
+python3 "$REPO_ROOT/scripts/receipt-restore.py" "$REPO_ROOT"
+
 log "matrix complete: rows=$MATRIX_CSV medians=$MEDIANS_CSV receipt=$RECEIPTS/bench.json"

@@ -39,6 +39,10 @@ ssh worker 'bash -s -- /tmp/fn-weights-receipt.json' \
 scp -q worker:/tmp/fn-weights-receipt.json "$TMP/weights-worker.json"
 WORKER_RECEIPT="$(install_receipt "$TMP/weights-worker.json" worker)"
 
+# Checkpoint purity: a re-run over an already-staged base must leave the
+# tree byte-identical (the driver re-runs this command as a validator).
+python3 "$REPO_ROOT/scripts/receipt-restore.py" "$REPO_ROOT"
+
 python3 - "$COORD_RECEIPT" "$WORKER_RECEIPT" <<'PY'
 import json, sys
 ok = True

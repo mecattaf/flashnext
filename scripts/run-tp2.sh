@@ -454,4 +454,8 @@ print(f"run-tp2: context receipt status={status}", file=sys.stderr)
 sys.exit(0 if status == "pass" else 1)
 PY
 
+# Checkpoint purity: restore any receipt this re-run rewrote without a
+# measured change (covers fn-preflight.sh's preflight.json too).
+python3 "$REPO_ROOT/scripts/receipt-restore.py" "$REPO_ROOT"
+
 log "first light complete; receipts: $RECEIPTS/{tp2,residency,fidelity,context}.json"
