@@ -127,7 +127,7 @@
     {
       "id": "instruments",
       "kind": "implementation",
-      "title": "Engagement-proof instruments adapted into the container overlay",
+      "title": "Engagement-proof instruments adapted into the container overlay (rev 2: lineage carrier for ae10e94)",
       "goal": "Create container/rootfs/ carrying three instrument modules adapted from the Apache-2.0 reference implementation, per specs/flashnext/evidence/ds4-vllm-manifest.md section 3, renamed to the FN_ env prefix: fn_synctrace.py (wraps the handful of tensor methods that force a blocking device-to-host sync, ~25 events per step, driven from a FN_PROFILE window), fn_offload_batch.py (the store-batch and promote budget helpers fixing the upstream offload defect; env FN_OFFLOAD_STORE_BATCH_FRAC and FN_OFFLOAD_PROMOTE_FRAC), and fn_expert_union.py (counts distinct routed experts per decode step; the reference wrapped a routing entry the workload never calls — re-target the wrap onto the stock fused-mixture router entry fused_topk in vllm/model_executor/layers/fused_moe/router/fused_topk_router.py as established in specs/flashnext/evidence/qsa-53896.md section 4; env FN_EXPERT_UNION with FN_EU_START, FN_EU_CALLS, FN_EU_OUT). Every module keeps an adaptation notice header naming the upstream file and license. Add tests/test_instruments.py asserting: py_compile passes for each module, each carries the notice header, and fn_offload_batch budget arithmetic matches the reference invariants (floor at max group size; promote counted in blocks). Boundaries: touch only container/rootfs/ and tests/.",
       "deliveredBehaviors": [
         "Instruments importable inside the image with FN_ kill-switches, default off",
