@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${FN_IMAGE:-flashnext:dev}"
 OUT="$REPO_ROOT/results/receipts/smoke.json"
 
-podman run --rm --device /dev/kfd --device /dev/dri \
+podman run --rm -i --device /dev/kfd --device /dev/dri \
   --security-opt seccomp=unconfined --ipc=host \
   -v "$REPO_ROOT/results:/results" "$IMAGE" python3 - <<'PY'
 import json, time, traceback

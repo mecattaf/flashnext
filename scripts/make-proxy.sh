@@ -113,7 +113,7 @@ log "building the proxy checkpoint at $PROXY_DIR ($SIGNATURE)"
 # --- 3. the build, inside the image ------------------------------------------
 # The workload is mounted READ-ONLY: this script reads its headers and its
 # tokenizer, never its tensor data.
-podman run --rm --device /dev/kfd --device /dev/dri \
+podman run --rm -i --device /dev/kfd --device /dev/dri \
   --security-opt seccomp=unconfined --ipc=host \
   -e FN_PROXY_LAYERS="$PROXY_LAYERS" \
   -e FN_PROXY_EXPERTS="$PROXY_EXPERTS" \
