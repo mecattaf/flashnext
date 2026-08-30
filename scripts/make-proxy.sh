@@ -229,6 +229,11 @@ def keep_tensor(name, layers, experts):
     """
     if name.startswith(VISION_PREFIXES):
         return True
+    if ".ple_embedding.ngram_embedding." in name:
+        # The engram table AND its weight_scale are regenerated at the
+        # proxy's split; keeping the workload's would collide with the
+        # synthesized ones (streamed vs header-parsed scale mismatch).
+        return False
     layer = DECODER_LAYER_RE.search(name)
     if layer and int(layer.group(1)) >= layers:
         return False
@@ -392,6 +397,19 @@ def main():
     # --- config: the workload's, shrunk --------------------------------------
     cfg = json.load(open(os.path.join(WORKLOAD, "config.json")))
     vocab_size = int(get_config_key(cfg, "vocab_size", workload_rows))
+
+    # Router width fix: .mlp.gate.weight is [num_experts, hidden], so its
+    # first dim must shrink with the expert count. Only the router is
+    # rewritten — this model's kv projection width equals the workload's
+    # expert count (512) by coincidence, so a blanket dim substitution
+    # would corrupt k_proj/v_proj.
+    workload_experts = get_config_key(cfg, "num_experts")
+    if workload_experts and int(workload_experts) != EXPERTS:
+        for name, (dtype_str, shape) in list(inventory.items()):
+            if name.endswith(".mlp.gate.weight"):
+                inventory[name] = (dtype_str, [
+                    EXPERTS if dim == int(workload_experts) else dim
+                    for dim in shape])
     set_config_key(cfg, "num_hidden_layers", LAYERS, force=True)
     layer_types = get_config_key(cfg, "layer_types")
     if isinstance(layer_types, list):
@@ -403,6 +421,45 @@ def main():
         raise RuntimeError("make-proxy: the workload config names no routed "
                            "expert count; refusing to guess one")
     set_config_key(cfg, "split_ngram_parts", SPLIT, force=True)
+
+    # The engram table's row count is DERIVED by the model, not read from
+    # the files: ngram_heads primes >= ngram_vocab_size_base, summed, padded
+    # to make_ngram_vocab_size_divisible_by (amd/ple_layer.py). Keep the
+    # workload's 20M base and _attach_table expects an 80M-row shard; shrink
+    # the base and reproduce the same arithmetic so expectation == files.
+    def _next_prime(n):
+        def is_prime(x):
+            if x < 2:
+                return False
+            if x % 2 == 0:
+                return x == 2
+            f = 3
+            while f * f <= x:
+                if x % f == 0:
+                    return False
+                f += 2
+            return True
+        n += 1
+        while not is_prime(n):
+            n += 1
+        return n
+
+    PROXY_NGRAM_BASE = 20000
+    ngram_size = int(get_config_key(cfg, "ngram_size", 3))
+    heads_per_ngram = int(get_config_key(cfg, "heads_per_ngram", 8))
+    ngram_divisor = int(get_config_key(
+        cfg, "make_ngram_vocab_size_divisible_by", 128))
+    ngram_heads = (ngram_size - 1) * heads_per_ngram
+    # ple_dense_layer_id is 0 for the proxy's single ple layer, so
+    # global_head == local_head and head h gets the (h+1)-th prime >= base.
+    prime, ngram_total = PROXY_NGRAM_BASE - 1, 0
+    for _h in range(ngram_heads):
+        prime = _next_prime(prime)
+        ngram_total += prime
+    ngram_padded_vocab = ((ngram_total + ngram_divisor - 1)
+                          // ngram_divisor) * ngram_divisor
+    set_config_key(cfg, "ngram_vocab_size_base", PROXY_NGRAM_BASE, force=True)
+
     set_config_key(cfg, "num_nextn_predict_layers", 0)
     quant = get_config_key(cfg, "quantization_config") or {}
     quant["weight_block_size"] = [BLOCK, BLOCK]
@@ -425,13 +482,29 @@ def main():
         pending, pending_bytes = {}, 0
         return index + 1
 
+    # The engram weight_scale must stream IN-PLACE with its module's other
+    # weights: the loader groups the weight stream by module prefix, so a
+    # scale appended in a trailing file arrives after the ple module has
+    # finished loading and is silently dropped ("weight_scale was never
+    # loaded from the checkpoint's streamed weights"). Only the layer that
+    # actually carries a ple module may receive one — a scale for any other
+    # layer routes to a nonexistent module and the loader raises. That is
+    # exactly the shard-bearing workload layer (ple_layer, layer 1 here).
+    inventory[ple_prefix + f"layers.{ple_layer}.ple.ple_embedding."
+                           "ngram_embedding.weight_scale"] = ("F32", [1])
+
     index = 0
     for name, (dtype_str, shape) in sorted(inventory.items()):
         torch_dtype = SAFETENSORS_DTYPES.get(dtype_str)
         if torch_dtype is None:
             raise RuntimeError(f"make-proxy: unmapped safetensors dtype "
                                f"{dtype_str!r} on {name}")
-        tensor = make_tensor(torch, torch_dtype, shape, generator)
+        if name.endswith("ngram_embedding.weight_scale"):
+            # Must be exactly 1.0: ple_mmap cross-checks the streamed value
+            # against its own header-parse of this same tensor.
+            tensor = torch.ones(shape, dtype=torch.float32)
+        else:
+            tensor = make_tensor(torch, torch_dtype, shape, generator)
         pending[name] = tensor
         pending_bytes += tensor.numel() * tensor.element_size()
         if pending_bytes >= FILE_BYTES_TARGET:
@@ -444,9 +517,12 @@ def main():
         raise RuntimeError(
             f"make-proxy: the workload engram table is {ple_dtype!r}; the "
             "fork's mmap path admits only F8_E4M3 (_FP8_DTYPES)")
-    table_plan = shard_plan(vocab_size, SPLIT)
+    table_plan = shard_plan(ngram_padded_vocab, SPLIT)
     table_rows = table_plan[-1][1] + table_plan[-1][2]
-    for layer_idx in range(LAYERS):
+    # Table files ONLY for the ple-bearing layer: a shard tensor named for a
+    # layer with no ple module streams into the loader and raises "no module
+    # or parameter named 'layers.N.ple'" (verified against the live loader).
+    for layer_idx in (ple_layer,):
         for shard_index, _start, rows in table_plan:
             tensor_name = ple_prefix + template.format(layer_idx, shard_index)
             if not shard_re.search(tensor_name):
@@ -461,10 +537,8 @@ def main():
                 os.path.join(PROXY, fname))
             files.append(fname)
             written_bytes += os.path.getsize(os.path.join(PROXY, fname))
-        # The block scale the loader intercepts and hands to set_weight_scale().
-        scale_name = ple_prefix + f"layers.{layer_idx}.ple.ple_embedding." \
-                                  "ngram_embedding.weight_scale"
-        pending[scale_name] = torch.ones([1], dtype=torch.float32)
+        # (The block scale streams from the main inventory files, injected
+        # above so it arrives grouped with its module's other weights.)
     index = flush(index)
 
     # --- tokenizer and config -------------------------------------------------
@@ -488,7 +562,7 @@ def main():
     # --- self-check: can the ENGINE find what we wrote? ----------------------
     discovered = ple_mmap.discover_shards(PROXY)
     found_layers = sorted(discovered)
-    expected_layers = list(range(LAYERS))
+    expected_layers = [ple_layer]
     if found_layers != expected_layers:
         raise RuntimeError(f"make-proxy: discover_shards found layers "
                            f"{found_layers}, expected {expected_layers}")

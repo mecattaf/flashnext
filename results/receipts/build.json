@@ -1,14 +1,14 @@
 {
  "step": "build",
  "status": "pass",
- "ts": "2026-08-29T07:07:21Z",
+ "ts": "2026-08-30T10:17:40Z",
  "data": {
   "lane": "container",
   "image": "flashnext:dev",
   "torch": "2.13.0+rocm7.14.0",
   "triton": "3.8.0+git4cff872c.rocm7.14.0",
   "fork_commit": "bdb6f0420e797de9266de593326368091085cc3b",
-  "image_digest": "sha256:175edc169402e327c4eed823caec30d196b7f824712e3a498333da87282f24de",
-  "wall_clock_s": 839
+  "image_digest": "sha256:810eea0c62e8e6e050c2b2e2bffc24ac54c6ef171a891d00a22bcc93eb796e72",
+  "wall_clock_s": 5
  }
 }
