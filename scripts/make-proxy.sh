@@ -310,7 +310,9 @@ def ple_file_format():
 def read_header(path, parse):
     """Tensor inventory of one safetensors file. HEADER ONLY — never the data."""
     if parse is not None:
-        return parse(path)
+        # The fork's parse_safetensors_header returns (metadata, data_offset).
+        header, _offset = parse(path)
+        return header
     with open(path, "rb") as fh:
         (size,) = struct.unpack("<Q", fh.read(8))
         return json.loads(fh.read(size))
@@ -359,7 +361,7 @@ def main():
     if not sources:
         raise RuntimeError(f"make-proxy: no safetensors files under {WORKLOAD}")
     inventory, ple_shard_rows = {}, {}
-    ple_prefix, ple_dtype = None, None
+    ple_prefix, ple_dtype, ple_layer = None, None, None
     for fname in sources:
         header = read_header(os.path.join(WORKLOAD, fname), parse_header)
         for name, entry in header.items():
@@ -371,7 +373,10 @@ def main():
                 # dtype and the name prefix are taken from the workload.
                 if ple_prefix is None:
                     ple_prefix, ple_dtype = name[:found.start()], entry["dtype"]
-                if int(found.group(1)) == 0:
+                    # The engram table lives on whichever layer carries the
+                    # shards (layer 1 in this checkpoint), not necessarily 0.
+                    ple_layer = int(found.group(1))
+                if int(found.group(1)) == ple_layer:
                     ple_shard_rows[int(found.group(2))] = list(entry["shape"])
                 continue
             if keep_tensor(name, LAYERS, EXPERTS):
@@ -488,9 +493,12 @@ def main():
         raise RuntimeError(f"make-proxy: discover_shards found layers "
                            f"{found_layers}, expected {expected_layers}")
     for layer_idx, shards in discovered.items():
-        if sorted(shards) != list(range(SPLIT)):
+        # discover_shards yields _LayerShards dataclasses; the shard indices
+        # are the keys of their .shards dict.
+        if sorted(shards.shards) != list(range(SPLIT)):
             raise RuntimeError(f"make-proxy: layer {layer_idx} discovered "
-                               f"shards {sorted(shards)}, expected 0..{SPLIT - 1}")
+                               f"shards {sorted(shards.shards)}, "
+                               f"expected 0..{SPLIT - 1}")
 
     manifest = {
         "signature": SIGNATURE,
