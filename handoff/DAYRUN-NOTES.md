@@ -160,3 +160,65 @@ happens before late allocations (gpu-memory-utilization then inert).
 TRITON_CACHE_DIR/TORCHINDUCTOR_CACHE_DIR pinned persistent (tmpfs default
 = full recompile every boot, ~25 min) — worth checking our container env.
 Full report in session transcript; branch dspark_mtp.py dumped to scratchpad.
+
+## Overnight run 2026-08-30 — FINAL RECORD (overseer, pre-compaction)
+
+Campaign: registration 01a050a1-77a7, arms 1-10, base advanced ff1731c → 61b3d87.
+Steers 1-11 (ledger above + these): 7=cp-weights stale-base answer, 8=cp-smoke
+schema-mismatch answer, 9=podman -i answer (inbox 49), 10=cp-smoke retry auth,
+11=lineage-carrier plan (inbox 52).
+
+FIX COMMITS, in order: 9480958 (receipt-restore.py checkpoint purity),
+7509202 (smoke probe boolean predicate), 83b4c73/593142c (rev-2 latch-clear
+titles), ae10e94 (podman run -i, smoke+make-proxy), 237d508 (make-proxy:
+parse header tuple, engram layer-1 not 0, _LayerShards.shards), 8669bad
+(first-light batch: ple weight_scale streamed in-place w/ module + ones,
+ngram vocab derived from base 20000 via the fork's prime arithmetic,
+ple-layer-only table files, flash-attn 2.8.3 AMD-Triton --no-deps,
+amdsmi .pth bridge), d446d2b (bench warmup_arm), carriers d21df3e/c21fdf6/
+18479cb/61b3d87 (instruments rev 2-5).
+
+PROXY FIRST LIGHT: locally verified SERVE-READY + completion on flashnext:dev
+(fp8 MoE admitted via in-kernel bf16 upcast, QSA on flash-attn Triton-AMD,
+PLE table mmap'd from NVMe, PIECEWISE compile). Weights: 185563854698 bytes
+byte-exact BOTH nodes (verified repeatedly). llama-swap inactive both nodes
+ALL RUN — catalog-row.patch STILL NOT APPLIED; prune hazard live until it is.
+
+TALLY OPERATIONAL PLAYBOOK (new pin b4zr2yn0, all proven tonight):
+- Driver rejects zero-diff squash AND impure checkpoints (tracked-file
+  mutation on validator re-run). Receipts: lane-commit + deterministic;
+  re-run must leave tree byte-identical (receipt-restore.py generalizes
+  cp-build's inline contract).
+- 10 lifetime attempts latch a task revision permanently ("latched for
+  human attention"); unlatch = worklist title revision (300-char cap!)
+  → fresh revision, fresh counter; loses that task's banked completion.
+- Checkpoint validation base = gate-proven integration head; advances ONLY
+  via gated lane merges — direct pushes never enter it. Carrier pattern:
+  bump instruments title rev + re-arm; its ~2-min lane squash carries
+  current main into the lineage.
+- Steward "diagnosis-unavailable / result-schema-mismatch (acceptance vs
+  acceptanceCriteria)" is a recurring harness bug; answer via task steer
+  (steers ARE the inbox answer mechanism; answeredBy links them).
+- Stale remote ref refs/tally/spec-build/v1/<ns>/<worklist-sha256>/summary/
+  quiescent kills passes with "summary disagrees" after progress; delete
+  the ref (git push origin :ref) + poll --once. flow supersede does NOT
+  clear it.
+- Scheduler goes quiescent when all pending work is latched/held; after
+  fixes, poll says "unchanged" — any docs push to main re-triggers.
+  "multiple machine escalations" = open inbox entries; answer then poll.
+- Arms land server-side even when the client times out/is killed (lease
+  arm counter is the truth). Status render desync (#623) persists —
+  corroborate with journal + captures, never status alone.
+- dcal calendar-sync can collide with a pass (09:07 stall); daemon restart
+  is safe and recovery-plan resumes cleanly.
+File upstream (mecattaf/tally.nix, morning): purity-guard ergonomics,
+summary-ref staleness, steward schema bug, latch-without-pardon-verb UX,
+attempt-storm cost during zero-diff loops, dcal collision.
+
+CP-BENCH READING GUIDE: spec-on/off arms are the MTP control (n=3 → 4
+rows/stream/step); expect a depth+concurrency decode cliff like ds4's
+(their gate n_rows*experts<=64, branch-only) — regression at C>=2 is
+expected physics, not our bug; random-token cells are the MTP acceptance
+LOWER BOUND by design. Sockets transport ⇒ decode collective-latency-bound
+vs ds4's IB 59µs bar (~160 chained all-reduces/step); their TB soft-RDMA
+105µs → IB cut 44% = what tomorrow's RDMA A/B is worth.
