@@ -21,6 +21,57 @@ at the bottom gets you back to that overnight state.
 
 ---
 
+## State of tonight -- 2026-08-30, read this before Gate 0
+
+Dated snapshot of what is actually true on the fleet as this document sits.
+It changes nothing below it; it tells you which of the steps below are not
+optional tomorrow.
+
+1. **There is no ibverbs device on either node right now.**
+   `/sys/class/infiniband` is empty on both -- measured. Round 1's pre-arm
+   bake did produce `usb4_rdma0`/`usb4_rdma5`, but on kernel **7.1.4**; the
+   fleet has since moved to **7.2.2** and the staged patched-module sets
+   cover only **7.1.4 and 7.2.0**. A kernel point release silently retired
+   the whole capability -- the out-of-tree treadmill demonstrating itself on
+   schedule. Any earlier claim in this estate that the verbs devices are
+   "present by design" is historical.
+2. **Therefore step 4 is mandatory tomorrow, on BOTH nodes, before anything
+   else RDMA-shaped.** `fetch-and-build.sh` hard-gates on the *running*
+   kernel being 7.2.2 (`TARGET_KVER`); it will refuse to build on a box that
+   has not booted it yet. Worker first, coordinator second, same ordering
+   discipline as the reboots in step 7. No A/B may start until both builds
+   have produced matching vermagic.
+3. **Gate 0's benchmark must have been measured over the Thunderbolt rail.**
+   The banked socket-transport bench that unlocks bring-up carries a
+   transport record; read it before you trust it:
+   ```
+   jq -r '.data.transport.fn_transport_rung' results/receipts/bench.json
+   ```
+   `rail0-sockets` satisfies Gate 0. **`wire-fallback` does not** -- that is
+   the 5 GbE control wire (`enp191s0`), a valid but *degraded* receipt, and
+   comparing verbs-on-rail-0 against a 5 GbE baseline measures two different
+   cables, not two transports. On a wire-fallback night the attended morning's
+   **first** transport act is healing rail 0 (the dark rail is asymmetric:
+   the worker's `thunderbolt0` has read NO-CARRIER through its own clean
+   reboot, so the coordinator's reboot alone may not heal it -- replug cable
+   A, reboot the worker, re-check) and **re-banking a rail-sockets bench**.
+   Verbs work starts after that receipt exists, not before.
+4. **The honest expectation is small.** The one measured end-to-end
+   precedent on this hardware class is **+3.4% decode over held TCP**
+   (wkljohn's same-rig A/B, 8.29 -> 8.57 t/s), and `strix-rdma`'s own author
+   calls NHI verbs "effectively identical to TCP v3" and ships TCP in
+   production. Go in expecting a real but small number. Adoption is decided
+   only by `ab-protocol.md`'s rule: a fingerprint-clean, counterbalanced,
+   majority-of-depths win. A measured "no" is a good result and gets written
+   up the same as a "yes".
+
+Everything already written below stays in force, unchanged: nothing GPL is
+vendored into this estate, nothing here installs or loads a module
+automatically, RDMA comes up on **one rail only**, and bring-up does not
+begin until a committed socket-transport benchmark exists under `results/`.
+
+---
+
 ## Gate 0 -- this plan may not start yet
 
 Two hard preconditions, checked before step 1, not negotiable:
@@ -429,3 +480,89 @@ nothing. Proceed to `ab-protocol.md` from here.
 5. Leave step 1's deploy-path fix in place -- it's a correctness fix for the
    fleet's deploy story generally, not an RDMA-specific change, and there's
    no reason to revert it.
+
+---
+
+## Appendix A -- odinlink fold, 2026-08-30 (repo issue 6)
+
+Short dated appendix. Folds what the OdinLink estate (`wkljohn/OdinLink-Five`
+and its consumer `ds4-strix-halo-tp-odinlink`) and the `strix-rdma` recon
+taught about USB4 verbs on this exact hardware class into the procedure
+above. It adds no step; it constrains how the steps above may fail.
+
+### A.1 Verbs init failure is TERMINAL. There is no retry rung.
+
+If `ncclCommInitRank` (or the provider under it) fails on the verbs arm --
+any failure, at any point, for any reason -- do **all** of this and nothing
+else:
+
+1. **Do not retry the verbs arm.** Not once. A failed init has already
+   posted work descriptors on at least one side; retrying is how a
+   half-open pair becomes a wedged cable (A.3).
+2. **Restore the socket env, byte-identical on both ranks.** Delete or stop
+   sourcing the step 11 delta on *both* nodes and diff the resulting env --
+   do not eyeball it. A one-sided restore is the "measure nothing, report no
+   difference" failure mode wearing a different hat.
+3. **One restart of the pair service. Exactly one.** If the socket arm does
+   not come back on that one restart, you are in step 12 rollback territory,
+   not in a debugging loop.
+4. **The terminal fallback rung is ALWAYS the ethernet wire** (`enp191s0`) --
+   never rail 1, never a second cable, never verbs on anything. This is the
+   same two-rung ladder `host/fn-env.sh` implements for the unattended
+   night (`rail0-sockets`, then `wire-fallback`), and the reason it stops
+   there is A.3: a rung that shares a cable with the failure cannot back it
+   up. Falling to the wire costs you Gate 0 provenance for that session's
+   numbers (see "State of tonight" item 3) -- which is the correct price,
+   because the alternative is an unrecoverable box.
+
+### A.2 The reference figures, so nobody re-derives them at 2am
+
+| figure | value | source |
+|---|---|---|
+| one-way latency, USB4 verbs, this hardware class | **~11 µs** | OdinLink operator report, 2026-08-30 (against ~1.4 µs for CX7 on a Spark) |
+| round trip, same stack | ~22 µs, versus ~286 µs over that rig's TCP | OdinLink consumer measurements |
+| end-to-end decode delta, same rig and settings | **+3.4%** (8.29 -> 8.57 t/s) | wkljohn's direct A/B |
+
+The gap between "22 µs versus 286 µs on the wire" and "+3.4% end to end" is
+the whole lesson: at TP=2 decode the op assembly around the transport --
+staging copies, doorbell, progress-thread wakeup, GPU poll -- dominates the
+wire crossing, and it does not shrink when the wire does. Treat ~11 µs as
+the *floor a perfect implementation would approach*, not as a prediction of
+tomorrow's A/B result.
+
+### A.3 The per-cable p2p ceiling is asymmetric, and one cable is the rule
+
+Bandwidth on this silicon does not behave the way the cable's label implies:
+
+- A 40 Gb/s USB4v1 link delivers roughly **20 Gb/s host-to-host p2p** --
+  the 80 Gb/s figure belongs to hosts with native TB5 controllers, which
+  Strix Halo does not have and cannot be given by an add-in card.
+- Measured on the OdinLink stack: **8.38 Gb/s unidirectional, 9.84 Gb/s
+  full-duplex.** Full duplex is ~1.17× one direction, **not 2×** -- the two
+  directions contend inside the same NHI, so "we will just run both ways"
+  buys almost nothing.
+- Aggregating cables does not fix it and is not available anyway: 3 DMA
+  rings per controller means exactly **one** RDMA lane per cable, and
+  OdinLink is documented-broken with two cables (both peer services land at
+  route 2; the upstream guidance is "use 1"). This corroborates step 10's
+  single-rail contract from a second, independent implementation.
+
+Practical consequence for tomorrow: do not expect the A/B to move prefill by
+a bandwidth argument. Decode is latency-bound and that is where the (small)
+prize is.
+
+### A.4 The wedge, restated where the ladder is written
+
+A verbs transmit toward a peer whose receive ring is not open **does not
+error**. It stalls on zero end-to-end credits and wedges the entire XDomain
+on that cable -- **including plain TCP on the same cable**. Recovery is
+**reboot-only**; independently reproduced in `strix-rdma`'s own log
+(2026-08-24, "the TB link wedge is reproducible") and detailed with its
+barrier discipline in `ab-protocol.md`.
+
+That is the load-bearing reason **no verbs rung may ever appear in an
+unattended fallback ladder**: the rung it would fall back to (sockets on
+`thunderbolt0`) is destroyed by the very failure it is falling back from. A
+fallback sharing a failure domain with the thing it backs up is not a
+fallback. Verbs stays attended, on one rail, with a human who can reach the
+console -- which is what this entire document is.

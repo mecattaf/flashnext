@@ -111,3 +111,63 @@ depth series -- see spec.md's bench-matrix ruling). Whichever way the
 adoption rule falls, write the receipt: a documented "RDMA measured, not
 adopted, delta was +N%" is exactly the kind of result the morning ledger is
 for, and saves the next person from re-running this A/B from scratch.
+
+---
+
+## Appendix -- odinlink fold, 2026-08-30 (repo issue 6)
+
+Dated appendix folding the OdinLink estate's evidence (`wkljohn/OdinLink-Five`
+and its consumer `ds4-strix-halo-tp-odinlink`, plus the `strix-rdma` recon)
+into this protocol. It changes no rule above; it prices the expectation and
+hardens the failure path.
+
+### What the numbers say before we measure anything
+
+| figure | value |
+|---|---|
+| one-way latency, USB4 verbs on this hardware class | ~11 µs (versus ~1.4 µs for CX7 on a Spark) |
+| round trip, same stack | ~22 µs, against ~286 µs on that rig's TCP |
+| end-to-end decode delta, same rig and settings | **+3.4%** (8.29 -> 8.57 t/s) |
+
+A ~13× improvement on the wire that yields +3.4% end to end is the single
+most useful calibration in this file. The op assembly around the transport
+-- staging copies, doorbell, progress-thread wakeup, GPU poll -- is what the
+decode allreduce actually spends its time on, and it does not shrink when
+the wire does. `strix-rdma`'s author reaches the same place independently:
+zero-copy NHI DMA measured "effectively identical" to his own TCP v3, and he
+ships TCP. Design the A/B to detect a small effect honestly rather than to
+confirm a large one; that is what the counterbalancing and the three-load
+medians above are for.
+
+**Bandwidth is not the lever either.** A 40 Gb/s USB4v1 link does about
+**20 Gb/s host-to-host p2p** (the 80 Gb/s number needs native TB5 silicon
+this platform does not have), and the measured OdinLink figures are
+**8.38 Gb/s unidirectional against 9.84 Gb/s full-duplex** -- the two
+directions contend inside the same NHI, so full duplex is ~1.17×, not 2×.
+Per-cable ceilings are asymmetric in exactly the way that punishes anyone
+budgeting from the cable's label. Decode is latency-bound; expect any win to
+show up there or nowhere.
+
+### Verbs init failure is terminal -- the arm ends, the session does not
+
+If the verbs arm fails to initialize at any point during this A/B:
+
+1. **No retry of the verbs arm.** A failed init may already have posted
+   descriptors on one side; a retry is how a half-open pair becomes a wedged
+   cable.
+2. **Restore the socket env byte-identical on both ranks** -- diff it, don't
+   eyeball it. A one-sided restore silently measures nothing.
+3. **One restart of the pair service, exactly one.** If sockets do not come
+   back on it, go to `attended-bringup.md` step 12 rollback.
+4. **The terminal fallback rung is always the ethernet wire** (`enp191s0`),
+   **never rail 1** and never verbs anywhere. Record the arm as failed, keep
+   the socket numbers you already have, and write the receipt -- a documented
+   "verbs did not initialize" is a result, not a lost session.
+
+This is the same reasoning as the wedge discipline above, in its operational
+form: an RDMA transmit toward a closed peer receive ring stalls on zero
+end-to-end credits and takes down the whole XDomain **including TCP on the
+same cable**, recovery **reboot-only**. Because the socket rung shares that
+cable, it cannot serve as the verbs rung's fallback -- which is precisely why
+no verbs rung appears in the unattended ladder in `host/fn-env.sh`, and why
+this comparison only ever runs with an operator present.
