@@ -27,8 +27,8 @@
 #
 # What changed vs the donor recipe (per IMPORTS.md sections 1 and 2):
 #   - torch is pinned to the fork's exact pin 2.13.0+rocm7.14.0 from the AMD
-#     stable multi-arch index (the index tops out there; no ROCm 10 wheels
-#     exist for gfx1151 — specs/flashnext/evidence/kyuz0-rocm10.md).
+#     stable multi-arch index (which tops out there). An aligned ROCm 10 set
+#     DOES exist on whl-next — measured by rocm10-probe via the ARGs, not here.
 #   - torchaudio is OMITTED; we drop the audio extra rather than downgrade
 #     torch to 2.11 (torchaudio capped kyuz0's auto-resolved set there).
 #   - the engine is the flashnext fork (mecattaf/vllm, branch flashnext),
