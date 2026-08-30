@@ -1838,10 +1838,11 @@ BEST: 215.9 GiB/s = 231.8 GB/s      efficiency vs peak: 91%
 (theoretical LPDDR5X-8000 x 256-bit = 256 GB/s = 238.4 GiB/s)
 ```
 
-ds4 measured 223.9 GiB/s (94%) on their node. Ours is **3.6% below theirs**, plausibly
-because `llama-swap` was still active and holding GPU during the probe. **Use 215.9 GiB/s
-as the denominator**, and consider re-running it once `llama-swap` is stopped (§10.0
-item 1) if a kernel-efficiency number is ever going to be quoted.
+ds4 measured 223.9 GiB/s (94%) on their node. Ours is **3.6% below theirs, and the
+contention excuse does not hold** — `llama-swap` was idle with no backend spawned and
+525 MB of VRAM in use (the desktop). **Use 215.9 GiB/s as the denominator.** The 3.6% gap
+is unexplained and is probably just silicon/thermal variation between the two rigs; do not
+attribute it without measuring.
 
 ### 16.7 What this does to Track B's price
 
@@ -1878,8 +1879,8 @@ atomic doorbell on mapped memory**, callback as fallback.
   proven as a *signalling primitive*, not as an all-reduce.
 - **The 650 µs detect tail** has no root cause. Suspect host scheduler preemption;
   unmeasured against a pinned/isolated thread.
-- **`t6` was taken with `llama-swap` active** — 91% vs ds4's 94% is unexplained and may
-  simply be contention.
+- **`t6`'s 91% vs ds4's 94%** is unexplained. The obvious suspect — `llama-swap`
+  contention — is ruled out: it was idle, no backend, 525 MB VRAM. Unattributed.
 
 ---
 
@@ -1932,7 +1933,17 @@ by the command shown.
   `169.254.53.173/16` on the worker, both link-local, no /30. §13.5's free win
   (static /30 + firewall trust, `NCCL_SOCKET_IFNAME=thunderbolt0` pinned) is **not done**;
   it is a host network change, out of the repo's scope.
-- **`llama-swap` is `active` on both nodes** and holds GPU. §10.0 item 1 stands, unexecuted.
+- **`llama-swap` is `active` on both nodes but holds NO GPU** — corrected 2026-08-31.
+  It is a ~17 MB Go proxy (`modules/llama-swap.nix:13`: *"The proxy itself is a small,
+  always-on Go process and consumes no GPU"*). Measured: `/running` → `{"running":[]}` on
+  both, no `llama-server` process, coordinator RSS 18.4 MB / 45 ms CPU over 6 h, VRAM 525 MB
+  (the desktop). **The hazard is not idle occupancy — it is a swap-in landing mid-run.**
+  Port 9292 has two live doors (tailnet, house LAN) plus the local utility-model wrapper,
+  and any of them dialling during a TP=2 serve spawns a backend allocating out of the same
+  125 GB unified pool vLLM holds. Nothing arbitrates this: `fn-cluster-up.sh` contains zero
+  references to llama-swap or :9292, so the two systems are mutually blind.
+  **Correct prep: `systemctl stop llama-swap` on both twins for the duration of a TP=2
+  serve, restart after. A stop, not a disable.**
 - **One stale container**: `fnproxy-dbg`, `Exited (0) 36 hours ago`, on the coordinator.
   §10.0 item 1's second half, unexecuted.
 - **Coordinator podman storage**: 128 images, 48.12 GB, 100% reclaimable, root at 74%
