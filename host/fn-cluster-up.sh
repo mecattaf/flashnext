@@ -121,6 +121,7 @@ SERVE_ARGS="--served-model-name $FN_SERVED_NAME \
   --max-num-batched-tokens ${FN_MAX_BATCHED_TOKENS:-2048} \
   --kv-cache-memory-bytes ${FN_KV_CACHE_BYTES:-12884901888} \
   --max-num-seqs ${FN_MAX_SEQS:-32} \
+  -cc.cudagraph_mode=PIECEWISE \
   ${FN_SPEC_ARGS:-}"
 
 log "guards: the eight parity assertions and the sharding checks (arithmetic only, no load)"
