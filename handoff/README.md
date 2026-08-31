@@ -1,3 +1,7 @@
+> **Not the entry point any more.** Start at **`handoff/START-HERE.md`** — the resume
+> document for returning to flashnext after the NixOS work (dotfiles#271). This file is the
+> catalog-row handoff, which is complete apart from Step 0 below, and is kept as the record.
+
 # Morning handoff — the fleet catalog row
 
 One file to apply, one review, one rebuild. `catalog-row.patch` is a
