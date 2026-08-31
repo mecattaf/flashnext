@@ -364,7 +364,7 @@ The state of this machine inverts the obvious risk ordering:
 | **stream (`/dev/tbstream*`)** | **none** | **`/dev/tbstream0..3` live, `thunderbolt_stream` refcount 6** |
 
 `docs/USB4STREAM-TRANSPORT.md` §5.4 scoped "port the reference doorbell allreduce from
-verbs onto the stream device's read/write" at **2–4 attended days**. That estimate was
+verbs onto the stream device's read/write" as a small port. That estimate was
 made without a reference implementation. We now have **two**, and the scope collapses:
 
 - **`tbv_ar2.hip`** (ds4-vllm `main`, Apache-2.0, 411 lines, `hipcc --offload-arch=gfx1151`)
@@ -501,7 +501,7 @@ from verbs onto a non-verbs stream device*, with only **~40 of 441 lines**
 transport-specific (`post_round():188` = one `odl_tb5_stream_send`;
 `poll_recv():203-220` = one `odl_tb5_stream_recv`). **It is a worked example of
 exactly the verbs→stream-device port our `docs/USB4STREAM-TRANSPORT.md` §5.4 scoped
-as "2–4 attended days".** Also carries `eager_break_functional_during_capture` +
+as a small port.** Also carries `eager_break_functional_during_capture` +
 `VLLM_USE_BREAKABLE_*` — a prerequisite for running **any** custom all-reduce under
 PIECEWISE that we had not identified.
 

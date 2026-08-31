@@ -583,7 +583,7 @@ than the latency figure would have been, because it is a cause rather than a
 data point.
 
 **Wall-clock estimates do not belong in this record.** Earlier drafts repeated
-the memo's "2–4 attended days" for the doorbell port. What is load-bearing is the
+the memo's effort estimate for the doorbell port. What is load-bearing is the
 *scope* — reimplement the reference doorbell and progress-thread all-reduce
 against `read`/`write` on the stream chardev, touching no vLLM distributed init —
 not a duration nobody can hold anyone to.

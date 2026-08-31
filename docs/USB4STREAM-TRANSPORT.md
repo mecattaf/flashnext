@@ -1,6 +1,13 @@
 # USB4STREAM as a tensor transport — the decision memo
 
-**Status:** decided, twice, on 2026-08-30. This file exists so the morning
+**Status:** decided, twice, on 2026-08-30.
+
+> **No wall-clock estimates in this memo.** Earlier revisions carried
+> "2-4 attended days", "3-5 attended days" and "2-4 attended weeks" figures.
+> They were authored without knowledge of the current codebase and kept
+> resurfacing as if measured. Scope claims — line counts, which pieces port
+> verbatim, which are genuinely hard — are verifiable and stay. Durations are
+> not, and are deliberately absent. Do not reintroduce them. This file exists so the morning
 reads *one* memo and does not re-deliberate. The deliberation record is
 `docs/DECISIONS-2026-08-30.md` §5; the numbers this memo waits on are banked
 by `bench/usb4stream-bench.py` into `results/receipts/usb4stream.json`.
@@ -71,14 +78,14 @@ goal:
 
 **Honest cost, corrected in both directions:** with this deployment's
 simplifications (2 ranks, one peer, host pointers only, channels pinned to
-1–2) a competent author gets a first working allreduce in **3–5 attended days**
-— to a *fragile prototype*. The mux layer, the 8-outstanding-request semantics
+1–2) a competent author gets a first working allreduce as a *fragile prototype*.
+The mux layer, the 8-outstanding-request semantics
 under the proxy threads, collective hang debugging, p99 validation and
 wedge-safe lifecycle across restarts put "trustworthy enough to leave serving
-overnight" at **2–4 attended weeks**.
+overnight" as the genuinely hard part.
 
 Two alternatives were dismissed with reasons, so they stay dismissed: a custom
-`torch.distributed` ProcessGroup backend (~2–3 attended weeks, far more
+`torch.distributed` ProcessGroup backend (far more
 invasive in distributed init, delivers nothing the communicator hook doesn't);
 and using the stream for the bootstrap/control plane only (bootstrap is not
 latency-critical, 5 GbE sockets are proven, and it would put wedge-hazard
@@ -97,17 +104,17 @@ Replace ~150–200 lines of ibverbs with an ~100-line fd pump:
   bytes into pinned UMA buffers, then store the flag the GPU spins on.
 - Send is `write` on the stream fd, from the same pinned buffers.
 - The wrapper and the ~51-line engine communicator hook port **nearly
-  verbatim** — this is the reason the cost is days and not weeks.
+  verbatim** — this is the reason the port is small.
 
 Cost versus RDMA at decode payloads: +2 syscalls, +2 kernel copies (sub-µs at
 these sizes), +progress-thread wakeup on RX. **Inferred landing zone: ~120–160
 µs against the 105 µs RDMA bar** at batch-1 decode payloads, degrading at
 speculative verify widths where the ~841 MB/s wire term bites.
 
-**2–4 attended days to first light; ~1 attended week to trusted.** For
+**Scope, not schedule:** ~100 lines of fd pump replacing ~150-200 lines of ibverbs; the wrapper and the ~51-line engine communicator hook port near-verbatim. For
 bulk/prefill/weights the primitive is *not* the answer and never will be — it
 loses on bandwidth to both patched RDMA and plausibly to plain
-TCP-over-`thunderbolt0`. The claim is scoped to **the decode allreduce, the op
+TCP-over-`rail0`. The claim is scoped to **the decode allreduce, the op
 that is the ceiling**.
 
 ## 4. Morning trigger criteria — build the port only if ALL hold
@@ -126,7 +133,7 @@ in-tree stream the **decode transport of record** and retire the RDMA stack to
 a benchmark reference. **If (1) fails — fat exchange latencies or unstable p99
 — the stream stays a bench curiosity and RDMA remains the only sub-socket
 path.** Second cheap check worth two minutes: benchmark
-TCP-over-`thunderbolt0` now that the firewall is open, to close the "does the
+TCP-over-`rail0` now that the firewall is open, to close the "does the
 stream even beat TCP on this wire" question.
 
 ## 5. Why the numbers probably are not banked yet — and that is correct
@@ -197,7 +204,7 @@ not carry, and does not bear on the bench.
 real and unchanged — first open enables router paths, last close disables
 them, and cycling that against a mismatched peer corrupts hop tables and needs
 a reboot. The ruling is about *what a wedge costs*. A wedge on cable A takes
-down `thunderbolt0`, the rail TP=2 depends on. A wedge on cable B costs a
+down `rail0`, the rail TP=2 depends on. A wedge on cable B costs a
 parked spare carrying nothing but link-local. Same hazard, an order of
 magnitude less blast radius, and the two cables land on **different PCI
 functions and therefore different Thunderbolt domains** on both nodes, so a
@@ -275,7 +282,7 @@ Read the resolved paths, hopids and cable label out of the receipt
 > decode payloads (inferred: +2 syscalls, +2 kernel copies, +progress-thread
 > wakeup on RX), degrading at speculative verify widths.
 >
-> **Effort.** 2–4 attended days to first light; ~1 attended week to trusted.
+> **Effort.** a small port to first light; hardening is the real cost.
 >
 > **Preconditions (do not start until all three hold).** (1) banked exchange
 > p50 at 8–16 KiB ≤ ~40 µs with a tight p99; (2) the bench matrix shows TP=2

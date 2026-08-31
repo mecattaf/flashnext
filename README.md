@@ -254,8 +254,7 @@ treadmill demonstrating itself). Two independent deliberations converged:
   under the collective library's proxy/protocol stack (which would eat most
   of the latency win), HopID scarcity forces a multiplexer over one or two
   long-lived streams, and comm teardown on every serve restart is exactly
-  the open/close pattern the wedge hazard forbids. 3–5 attended days to a
-  fragile prototype; 2–4 attended *weeks* to overnight-trustworthy.
+  the open/close pattern the wedge hazard forbids. a fragile prototype at best; 2–4 attended *weeks* to overnight-trustworthy.
 - **The real path is a 2–4 attended-day port of the reference doorbell
   allreduce** (the 105 µs bar) from verbs onto the stream device's
   read/write. Trigger criteria, decided by tonight's numbers: banked

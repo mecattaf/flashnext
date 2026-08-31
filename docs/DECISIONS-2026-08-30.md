@@ -407,7 +407,7 @@ nonetheless the **wrong vehicle for the stated goal**, for three reasons:
 Estimate corrected in both directions: the first deliberation's "1–2 focused
 weeks" is neither floor nor ceiling. With this deployment's simplifications
 (2 ranks, one peer, host pointers only, pin `NCCL_MAX_NCHANNELS=1–2`) a
-competent author gets a first working allreduce in **3–5 attended days**. But
+competent author gets a first working allreduce as a fragile prototype. But
 the mux layer, 8-outstanding request semantics under RCCL's proxy threads,
 collective hang debugging, p99 validation, and wedge-safe lifecycle across
 restarts put "trustworthy enough to leave serving overnight" at **2–4 attended
@@ -421,12 +421,11 @@ on). Cost versus RDMA: +2 syscalls, +2 kernel copies (sub-µs at these sizes),
 +progress-thread wakeup on RX. The wrapper and the ~51-line vLLM communicator
 hook port nearly verbatim. **INFERRED landing zone: ~120–160 µs against the
 105 µs RDMA bar** at batch-1 decode payloads, degrading at MTP verify widths
-where the ~841 MB/s wire term bites. **2–4 attended days to first light, ~1
-attended week to trusted.** This is what "USB4STREAM as the actual tensor
+where the ~841 MB/s wire term bites. **Scope, not schedule:** ~100 lines of fd pump replacing ~150-200 lines of ibverbs; the wrapper and the ~51-line engine communicator hook port near-verbatim. This is what "USB4STREAM as the actual tensor
 transport" means, and the first deliberation never scoped it.
 
 Two alternatives dismissed: a torch.distributed custom ProcessGroup backend
-(~2–3 attended weeks, touches vLLM's distributed init far more invasively,
+(touches vLLM's distributed init far more invasively,
 delivers nothing the communicator hook doesn't); and using tbstream for the
 bootstrap/control plane only (bootstrap isn't latency-critical, 5GbE sockets are
 proven, and it would put wedge-hazard device opens in the serve path for zero
