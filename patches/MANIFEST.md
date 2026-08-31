@@ -2,7 +2,7 @@
 
 Base: `8e4e036a311604800334989485b4ee23925956da` (head of upstream PR #54129,
 `Trosfy:ple-mmap-upstream`, which carries the full #53896 model support).
-Branch head mirrored here: `a05fa983fb4699dc1dc704776e3fed014c215cc7` — 13
+Branch head mirrored here: `3f7268bb766a47fe66552865843205584b90dd84` — 14
 commits, one `.patch` each, numbered in apply order. `scripts/verify-fork.sh`
 enforces `n_patches >= n_commits` against the live branch.
 
@@ -91,6 +91,40 @@ format clean; `tools/check_nix_substrate.py` passes. On the real device a
 synthetic table registers its 4 shard mappings with **zero** collisions (the
 alignment mitigation working), a deliberate colliding re-registration of one of
 those spans returns 712, and the staged copy returns byte-exact rows.
+
+## The multimodal PLE load-order fix (patch 0014)
+
+TP=2 first light on the **full** multimodal checkpoint died deterministically
+on both ranks, ~40 s in, at **0/131 safetensors files**: `PLE mmap: layer 1
+weight_scale was never loaded from the checkpoint's streamed weights`. The
+tensor is not missing — in this checkpoint's `model.safetensors.index.json`
+(152089 tensors) the single PLE layer's
+`model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale`
+lives in `model-00005-of-00131.safetensors`, so at 0/131 it has simply not
+streamed yet. The raise is right; the **call** is early. `AutoWeightsLoader`
+dispatches a child module's `load_weights` once per *contiguous run* of that
+child's prefix in the stream, not once at the end — and on
+`Qwen4ExpForConditionalGeneration` the `visual.*` tensors interleave with
+`model.language_model.*`, so the inner `Qwen4ExpForCausalLM.load_weights`
+returns, and calls `build_tables`, mid-stream. The TP=1 PLE-only proxy
+checkpoint has no `visual.*` prefix and never exercised this, so it shipped
+green.
+
+| file | Δ | purpose |
+|---|---|---|
+| `vllm/models/qwen4_exp/amd/model.py` | +8/-1 | Three lines and a comment. `Qwen4ExpForCausalLM.__init__` gains `self._ple_build_tables_deferred = False`; its `load_weights` gates the existing call on `ple_mmap.enabled() and not self._ple_build_tables_deferred`; `Qwen4ExpForConditionalGeneration.__init__` sets that flag **True** on the inner `language_model` it just constructed, so only the wrapper's own post-stream `build_tables` — the one that genuinely runs after the whole checkpoint — reaches the attach. Standalone `Qwen4ExpForCausalLM` is untouched (flag stays `False`, single post-stream call, asserted by the pre-existing "exactly once" test); `--load-format dummy` never runs `load_weights` at all. The fail-closed raise in `_attach_table` is **not** weakened — every remaining call site now runs strictly after the complete stream, so it keeps full strength and can no longer fire on a load that was always going to succeed. |
+| `vllm/models/qwen4_exp/nvidia/model.py` | +8/-1 | Byte-mirrored from `amd/model.py`, preserving the patch-0010 parity invariant (`cmp` confirms identical). The bug is latent upstream too: any multimodal checkpoint whose early shards interleave `visual.*` ahead of the PLE `weight_scale` hits it on the nvidia tree as well. |
+| `vllm/models/qwen4_exp/common/ple_mmap.py` | +18/-20 | **Docstring only, zero code change.** Patch 0013's expanded `build_tables` docstring asserted that the inner CausalLM call reaches this function mid-load and argued that was safe; that premise is now false, so the paragraph is deleted and the repeat-call cost paragraph is retargeted at `reload_weights`, the only remaining repeat caller. |
+| `tests/models/qwen4_exp/test_ple_mmap.py` | +28 | The pre-existing `test_model_load_weights_calls_build_tables_exactly_once_when_enabled` drives `load_weights` with a `SimpleNamespace` stub as `self` and needs the new attribute (models real instance state; its intent is unchanged and still asserted). Adds `test_causal_lm_load_weights_skips_build_tables_when_deferred`: flag `True` + `VLLM_PLE_MMAP=1` ⇒ `build_tables` never called. |
+
+Ran in `flashnext:dev` on gfx1151 with the edited tree bind-mounted over
+`/opt/vllm`: the `amd` and `nvidia` model modules import clean in separate
+processes (they cannot share one — duplicate custom-op registration of
+`vllm::qwen4_exp_grouped_gemma_rmsnorm`, a pre-existing property of the image,
+verified unmodified), and all five PLE suites pass one file per process:
+`test_ple_mmap.py` **83** (82 + the new pin), `test_ple_mmap_amd.py` 15,
+`test_ple_mmap_host_registration.py` 30, `test_ple.py` 11,
+`test_weight_loading.py` 30 — **169 total, zero failures**.
 
 ## Not yet executed anywhere
 

@@ -1,14 +1,15 @@
 {
  "step": "build",
  "status": "pass",
- "ts": "2026-08-30T10:17:40Z",
+ "ts": "2026-08-31T14:58:54Z",
  "data": {
   "lane": "container",
   "image": "flashnext:dev",
   "torch": "2.13.0+rocm7.14.0",
   "triton": "3.8.0+git4cff872c.rocm7.14.0",
-  "fork_commit": "bdb6f0420e797de9266de593326368091085cc3b",
-  "image_digest": "sha256:810eea0c62e8e6e050c2b2e2bffc24ac54c6ef171a891d00a22bcc93eb796e72",
-  "wall_clock_s": 5
+  "fork_commit": "3f7268bb766a47fe66552865843205584b90dd84",
+  "image_digest": "sha256:1a7c4e58c51856bba3fc3a5d778721e2aeb5a1bb98c707773fa21c95a1fc5767",
+  "wall_clock_s": 551,
+  "note": "regenerated 2026-08-31 evening from the live image after receipt-restore's mirror clobbered the fresh receipt with the git-restored stale copy: identity fields re-read from the image's build-info.json and podman inspect just now; ts and wall_clock_s carried from the build transcript (build started 14:49:43Z, receipt line 14:58:54Z)."
  }
 }

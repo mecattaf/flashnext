@@ -1,0 +1,241 @@
+From 3f7268bb766a47fe66552865843205584b90dd84 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@mecattaf.dev>
+Date: Mon, 31 Aug 2026 16:48:24 +0200
+Subject: [PATCH] [ROCm] Defer the inner CausalLM build_tables on the
+ multimodal PLE path
+
+TP=2 first light on the FULL multimodal checkpoint died deterministically
+on both ranks, ~40 s into serve, at 0/131 safetensors FILES:
+
+  RuntimeError: PLE mmap: layer 1 weight_scale was never loaded from the
+  checkpoint's streamed weights
+
+raised from _attach_table via build_tables. The TP=1 PLE-only proxy
+checkpoint never exercised this path, so it shipped green.
+
+The tensor is not missing. In this checkpoint's
+model.safetensors.index.json (152089 tensors) the one PLE layer's
+model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale
+lives in model-00005-of-00131.safetensors, so at 0/131 it simply has not
+streamed yet. The raise is correct; the CALL is early.
+
+Mechanism: AutoWeightsLoader dispatches a child module's load_weights
+once per CONTIGUOUS RUN of that child's prefix in the weight stream, not
+once at the end. On Qwen4ExpForConditionalGeneration the visual.* tensors
+interleave with model.language_model.*, so the inner
+Qwen4ExpForCausalLM.load_weights returns -- and calls build_tables --
+while the language-model stream is still in progress. The wrapper's own
+post-stream build_tables call at the end of
+Qwen4ExpForConditionalGeneration.load_weights is the one that is
+genuinely after the whole checkpoint.
+
+Fix, three lines, no change to the fail-closed raise:
+
+  Qwen4ExpForCausalLM.__init__      self._ple_build_tables_deferred = False
+  Qwen4ExpForCausalLM.load_weights  gate build_tables on `not deferred`
+  Qwen4ExpForConditionalGeneration.__init__
+                                    set the flag True on the inner
+                                    language_model it just constructed
+
+Standalone Qwen4ExpForCausalLM is untouched: the flag stays False and the
+single post-stream call still fires (the existing "exactly once" test
+asserts it). --load-format dummy never runs load_weights at all. Every
+remaining call site now runs strictly after the complete stream, so the
+weight_scale raise keeps its full fail-closed strength -- it just can no
+longer fire on a load that was always going to succeed.
+
+nvidia/model.py is byte-mirrored from amd/model.py, preserving the
+patch-0010 parity invariant (cmp confirms identical).
+
+build_tables' docstring is amended, not its code: the paragraph asserting
+that the inner CausalLM call reaches build_tables mid-load is now false,
+and the repeat-call cost paragraph is retargeted at reload_weights, which
+is the only remaining repeat caller.
+
+tests/models/qwen4_exp/test_ple_mmap.py: the existing stub-based
+test_model_load_weights_calls_build_tables_exactly_once_when_enabled
+drives load_weights with a SimpleNamespace `self` and needs the new
+attribute; adds test_causal_lm_load_weights_skips_build_tables_when_
+deferred pinning that flag=True + VLLM_PLE_MMAP=1 never calls
+build_tables.
+
+Verified in flashnext:dev on gfx1151 with the edited tree bind-mounted
+over /opt/vllm: amd and nvidia model modules import clean in separate
+processes, and all five PLE suites pass one-file-per-process --
+test_ple_mmap.py 83 (82 + the new pin), test_ple_mmap_amd.py 15,
+test_ple_mmap_host_registration.py 30, test_ple.py 11,
+test_weight_loading.py 30; 169 total, zero failures.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_015yaArXNiA4ThqRxNrTnEMC
+---
+ tests/models/qwen4_exp/test_ple_mmap.py  | 28 +++++++++++++++++
+ vllm/models/qwen4_exp/amd/model.py       |  8 ++++-
+ vllm/models/qwen4_exp/common/ple_mmap.py | 38 +++++++++++-------------
+ vllm/models/qwen4_exp/nvidia/model.py    |  8 ++++-
+ 4 files changed, 60 insertions(+), 22 deletions(-)
+
+diff --git a/tests/models/qwen4_exp/test_ple_mmap.py b/tests/models/qwen4_exp/test_ple_mmap.py
+index d303033..f3b4181 100644
+--- a/tests/models/qwen4_exp/test_ple_mmap.py
++++ b/tests/models/qwen4_exp/test_ple_mmap.py
+@@ -1920,6 +1920,7 @@ def test_model_load_weights_calls_build_tables_exactly_once_when_enabled(
+         hf_to_vllm_mapper=cls.hf_to_vllm_mapper,
+         model_config=model_config,
+         language_model_only=False,
++        _ple_build_tables_deferred=False,
+     )
+     cc = SimpleNamespace(static_forward_context={})
+     vllm_config = SimpleNamespace(compilation_config=cc)
+@@ -1931,6 +1932,33 @@ def test_model_load_weights_calls_build_tables_exactly_once_when_enabled(
+     assert calls == [(model_config, cc)]
+ 
+ 
++def test_causal_lm_load_weights_skips_build_tables_when_deferred(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
++) -> None:
++    """The ConditionalGeneration wrapper defers the inner CausalLM call:
++    AutoWeightsLoader dispatches a child's load_weights once per contiguous
++    run of its prefix in the stream, so the inner call can fire mid-stream,
++    before the PLE weight_scale has been intercepted."""
++    monkeypatch.setenv("VLLM_PLE_MMAP", "1")
++    monkeypatch.setattr(model_module, "AutoWeightsLoader", _FakeAutoWeightsLoader)
++    calls: list[tuple[object, object]] = []
++    monkeypatch.setattr(ple_mmap, "build_tables", lambda mc, cc: calls.append((mc, cc)))
++
++    stub_self = SimpleNamespace(
++        hf_to_vllm_mapper=model_module.Qwen4ExpForCausalLM.hf_to_vllm_mapper,
++        model_config=_model_config(tmp_path),
++        _ple_build_tables_deferred=True,
++    )
++    cc = SimpleNamespace(static_forward_context={})
++    vllm_config = SimpleNamespace(compilation_config=cc)
++
++    with set_current_vllm_config(vllm_config):
++        result = model_module.Qwen4ExpForCausalLM.load_weights(stub_self, iter([]))
++
++    assert result == {"dummy"}
++    assert calls == []
++
++
+ def test_model_load_weights_never_calls_build_tables_when_disabled(
+     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+ ) -> None:
+diff --git a/vllm/models/qwen4_exp/amd/model.py b/vllm/models/qwen4_exp/amd/model.py
+index 3669237..c044080 100644
+--- a/vllm/models/qwen4_exp/amd/model.py
++++ b/vllm/models/qwen4_exp/amd/model.py
+@@ -617,6 +617,7 @@ class Qwen4ExpForCausalLM(
+         self.quant_config = vllm_config.quant_config
+         self.config = config
+         self.scheduler_config = vllm_config.scheduler_config
++        self._ple_build_tables_deferred = False
+         if vllm_config.cache_config.mamba_cache_mode == "all":
+             raise NotImplementedError(
+                 "Qwen4Exp currently does not support 'all' prefix caching, "
+@@ -810,7 +811,7 @@ class Qwen4ExpForCausalLM(
+             ignore_unexpected_suffixes=_QWEN4_EXP_IGNORED_MISSING_SUFFIXES.copy(),
+         )
+         loaded = loader.load_weights(weights, mapper=mapper)
+-        if ple_mmap.enabled():
++        if ple_mmap.enabled() and not self._ple_build_tables_deferred:
+             ple_mmap.build_tables(
+                 self.model_config, get_current_vllm_config().compilation_config
+             )
+@@ -913,6 +914,11 @@ class Qwen4ExpForConditionalGeneration(
+                 vllm_config=vllm_config,
+                 prefix=maybe_prefix(prefix, "language_model"),
+             )
++        # AutoWeightsLoader dispatches a child's load_weights once per
++        # contiguous run of its prefix in the stream, so the inner call can
++        # fire mid-stream, before the PLE weight_scale has streamed; defer
++        # build_tables to this wrapper's post-stream call in load_weights.
++        self.language_model._ple_build_tables_deferred = True
+ 
+         self.make_empty_intermediate_tensors = (
+             self.language_model.make_empty_intermediate_tensors
+diff --git a/vllm/models/qwen4_exp/common/ple_mmap.py b/vllm/models/qwen4_exp/common/ple_mmap.py
+index 6a06f49..c31580e 100644
+--- a/vllm/models/qwen4_exp/common/ple_mmap.py
++++ b/vllm/models/qwen4_exp/common/ple_mmap.py
+@@ -1101,26 +1101,24 @@ def build_tables(
+     ``Qwen4ExpForCausalLM.load_weights`` after their respective streamed
+     weight passes complete — never from
+     ``Qwen4ExpNGramEmbedding.load_weights``, which would stream the whole
+-    table mid-load during the tightest memory transient. Since the
+-    ConditionalGeneration wrapper composes CausalLM internally, a single
+-    real load can reach this function twice.
+-
+-    Two costs are avoided on that redundant second call: ``model_path`` is
+-    resolved (cheap: a directory check or a local HF cache lookup) so every
+-    already-attached layer can still be verified against it, but the
+-    ``pending`` list (layers whose table is still ``None``) is computed
+-    BEFORE the expensive part — ``discover_shards``' header scan of every
+-    checkpoint file — and that scan, plus the whole attach loop, is skipped
+-    entirely once ``pending`` is empty. This also restores the "prewarm on
+-    the return path" guarantee by construction: ``_attach_table`` only ever
+-    runs for a layer that has never been attached.
+-
+-    On the ConditionalGeneration path, the inner ``Qwen4ExpForCausalLM``
+-    call reaches this function (and its prewarm) BEFORE the outer
+-    ``AutoWeightsLoader.load_weights`` call has fully returned — i.e.
+-    mid-load, not after. This is safe because ``compute_prewarm_bound``
+-    re-reads ``MemAvailable`` at that instant rather than assuming any
+-    particular point in the load timeline.
++    table mid-load during the tightest memory transient. When the
++    ConditionalGeneration wrapper composes CausalLM internally, the inner
++    call is deferred (``_ple_build_tables_deferred``):
++    ``AutoWeightsLoader`` dispatches a child's ``load_weights`` once per
++    contiguous run of its prefix in the stream, so the inner call can fire
++    mid-stream, before the PLE ``weight_scale`` has been intercepted. Only
++    the wrapper's own post-stream call reaches this function.
++
++    Two costs are avoided on a redundant repeat call (``reload_weights``):
++    ``model_path`` is resolved (cheap: a directory check or a local HF
++    cache lookup) so every already-attached layer can still be verified
++    against it, but the ``pending`` list (layers whose table is still
++    ``None``) is computed BEFORE the expensive part — ``discover_shards``'
++    header scan of every checkpoint file — and that scan, plus the whole
++    attach loop, is skipped entirely once ``pending`` is empty. This also
++    restores the "prewarm on the return path" guarantee by construction:
++    ``_attach_table`` only ever runs for a layer that has never been
++    attached.
+ 
+     Raises:
+         RuntimeError: a PLE layer has no matching shards on disk, a
+diff --git a/vllm/models/qwen4_exp/nvidia/model.py b/vllm/models/qwen4_exp/nvidia/model.py
+index 3669237..c044080 100644
+--- a/vllm/models/qwen4_exp/nvidia/model.py
++++ b/vllm/models/qwen4_exp/nvidia/model.py
+@@ -617,6 +617,7 @@ class Qwen4ExpForCausalLM(
+         self.quant_config = vllm_config.quant_config
+         self.config = config
+         self.scheduler_config = vllm_config.scheduler_config
++        self._ple_build_tables_deferred = False
+         if vllm_config.cache_config.mamba_cache_mode == "all":
+             raise NotImplementedError(
+                 "Qwen4Exp currently does not support 'all' prefix caching, "
+@@ -810,7 +811,7 @@ class Qwen4ExpForCausalLM(
+             ignore_unexpected_suffixes=_QWEN4_EXP_IGNORED_MISSING_SUFFIXES.copy(),
+         )
+         loaded = loader.load_weights(weights, mapper=mapper)
+-        if ple_mmap.enabled():
++        if ple_mmap.enabled() and not self._ple_build_tables_deferred:
+             ple_mmap.build_tables(
+                 self.model_config, get_current_vllm_config().compilation_config
+             )
+@@ -913,6 +914,11 @@ class Qwen4ExpForConditionalGeneration(
+                 vllm_config=vllm_config,
+                 prefix=maybe_prefix(prefix, "language_model"),
+             )
++        # AutoWeightsLoader dispatches a child's load_weights once per
++        # contiguous run of its prefix in the stream, so the inner call can
++        # fire mid-stream, before the PLE weight_scale has streamed; defer
++        # build_tables to this wrapper's post-stream call in load_weights.
++        self.language_model._ple_build_tables_deferred = True
+ 
+         self.make_empty_intermediate_tensors = (
+             self.language_model.make_empty_intermediate_tensors
+-- 
+2.55.0
+

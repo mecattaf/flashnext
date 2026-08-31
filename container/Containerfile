@@ -93,13 +93,34 @@ RUN pip install --index-url ${ROCM_WHL} \
 # ---- the engine fork, built from source for gfx1151 ----
 ARG VLLM_REPO=https://github.com/mecattaf/vllm
 ARG VLLM_BRANCH=flashnext
+# The fork commit this image is expected to be built from. Two jobs, and both
+# are load-bearing because the clone below is a network fetch inside a cached
+# layer — podman keys that layer on the resolved RUN string plus the ARG
+# values above it, and never on what the remote branch happens to point at:
+#   1. bumping this value BUSTS the clone layer (measured), which is what makes
+#      a fork push actually reach the image;
+#   2. the assertion turns the old silent failure into a loud abort — before
+#      it, a moved branch left the cached clone at an older commit and
+#      build-info.json truthfully reported that stale sha, so nothing fired.
+# Bump it in the same change that pushes the fork.
+ARG VLLM_COMMIT=3f7268bb766a47fe66552865843205584b90dd84
 ENV VLLM_TARGET_DEVICE=rocm \
     PYTORCH_ROCM_ARCH=gfx1151
 
 # If a host fork checkout is bind-mounted over /opt/vllm (build.sh -v), keep
-# it — that is the incremental-iteration path. Otherwise clone the baseline.
+# it — that is the incremental-iteration path, and it is deliberately exempt
+# from the commit assertion (the whole point is an uncommitted working tree;
+# such an image is not shippable anyway, since --volume mounts are transient
+# and never committed to the layer). Otherwise clone the baseline.
 RUN if [ ! -d /opt/vllm/.git ]; then \
-        git clone --depth 1 --branch flashnext https://github.com/mecattaf/vllm /opt/vllm; \
+        git clone --depth 1 --branch "${VLLM_BRANCH}" "${VLLM_REPO}" /opt/vllm \
+        && head="$(git -C /opt/vllm rev-parse HEAD)" \
+        && if [ "$head" != "${VLLM_COMMIT}" ]; then \
+               echo "FATAL: ${VLLM_REPO} branch ${VLLM_BRANCH} is at $head," >&2; \
+               echo "       expected ${VLLM_COMMIT}. Bump ARG VLLM_COMMIT in" >&2; \
+               echo "       container/Containerfile to build this head." >&2; \
+               exit 1; \
+           fi; \
     fi \
     && git -C /opt/vllm rev-parse HEAD > /opt/flashnext-fork-commit \
     && git -C /opt/vllm rev-parse --abbrev-ref HEAD >> /opt/flashnext-fork-commit
