@@ -229,8 +229,21 @@ worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true \
 # The two-GPU gate below then read '' and refused to serve. Declaring one GPU
 # per node makes ray report 1.0 each (2.0 cluster-wide) and a num_gpus=1 remote
 # task really does acquire the device (AMD Radeon 8060S Graphics).
+# --node-ip-address is PINNED to the fleet identity, not autodetected. Ray's
+# own probe picked wlp192s0 (10.42.0.2) — the HOUSE WIFI — as the head's node
+# IP. The two-GPU gate still passed, because ray's own traffic reaches the head
+# via the address the join dials; but vLLM then created the c10d TCPStore at
+# ray's advertised head IP, on the house LAN, which the worker on the 10.99.x
+# fleet network cannot route to. The serve died with
+#   DistStoreError: Timed out after 601 seconds waiting for clients.
+#                   1/2 clients joined
+# Pinning both ends to the fleet /32s keeps the rendezvous on the fleet. This is
+# deliberately NOT done with VLLM_HOST_IP: that is VLLM_-prefixed, so it rides
+# the doctrine env fn-preflight.sh byte-compares, and it must differ per node —
+# setting it would fail the byte-diff by construction.
 log "ray head on the coordinator"
 podman exec "$FN_CONTAINER" ray start --head \
+  --node-ip-address "$FN_HEAD_IP" \
   --port "$FN_RAY_PORT" \
   --num-cpus "$RAY_NUM_CPUS" \
   --num-gpus "$RAY_NUM_GPUS" \
@@ -239,6 +252,7 @@ log "ray join from the worker (dials the fleet identity $FN_HEAD_IP on the wire)
 # --include-dashboard is head-only: ray PANICs if it is passed to a worker.
 worker "podman exec '$FN_CONTAINER' ray start \
   --address='$FN_HEAD_IP:$FN_RAY_PORT' \
+  --node-ip-address='$FN_WORKER_HOST' \
   --num-cpus '$RAY_NUM_CPUS' \
   --num-gpus '$RAY_NUM_GPUS'" >/dev/null
 
