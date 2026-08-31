@@ -157,10 +157,135 @@ export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC="${TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC:-240
 export TORCH_NCCL_ENABLE_MONITORING="${TORCH_NCCL_ENABLE_MONITORING:-0}"
 export NCCL_TIMEOUT_MS="${NCCL_TIMEOUT_MS:-2400000}"
 
+# --- gloo: the CPU process group ----------------------------------------------
+# Every rank stands up TWO process groups, not one: the device group on RCCL
+# (the NCCL_ block above) and a CPU group on gloo. The fork builds the world
+# group as backend="cpu:gloo,cuda:nccl" (vllm/distributed/parallel_state.py
+# :1504) and every GroupCoordinator carries both handles (:403-404), so a CPU
+# group that cannot form kills engine-core init before a single weight loads.
+#
+# WITHOUT THIS PIN THE CPU GROUP NEVER FORMS ON A NIXOS BOX. torch's
+# ProcessGroupGloo::createDefaultDevice() reads GLOO_SOCKET_IFNAME first;
+# unset, it falls back to gethostname() and binds whatever that name resolves
+# to, warning ONLY if the name resolves to nothing at all. NixOS writes each
+# machine's own name into /etc/hosts on 127.0.0.2 — measured 2026-08-31 inside
+# the serve image itself: `socket.gethostbyname("coordinator")` -> 127.0.0.2
+# on this node and `worker` -> 127.0.0.2 on the other. The name DOES resolve,
+# so torch prints no warning whatsoever and both ranks silently advertise
+# LOOPBACK; the failure surfaces minutes later, deep in engine-core init, as
+#   Gloo connectFullMesh failed with [gloo/transport/tcp/pair.cc:152] timed
+#   out connecting: SO_ERROR: Connection refused, remote=[127.0.0.2]:2485,
+#   rank=0, size=2
+# — an address no peer can ever reach across the pair. Reproduced and then
+# cleared ON DEMAND, both directions, with a two-rank gloo all-reduce inside
+# the existing containers (no ray, no vLLM, no model, no GPU): run
+# `torch.distributed.init_process_group("gloo")` + `all_reduce` under
+# MASTER_ADDR=10.99.1.1 WORLD_SIZE=2 with RANK=0 on the coordinator and
+# RANK=1 on the worker. Unpinned it fails in ~35 s with exactly the string
+# above; pinned it all-reduces 3.0 on both ranks in ~20 s. Note that BOTH
+# ranks still print `gethostname() -> 127.0.0.2` when the pin is applied —
+# the /etc/hosts mapping is untouched, the pin simply stops gloo consulting
+# it. That is the signature to look for.
+#
+# THE WIRE, NOT A RAIL — the one place the ds4 estate's env is deliberately
+# NOT copied. ds4-cluster-env.sh:30 pins GLOO_SOCKET_IFNAME=thunderbolt0, the
+# same interface as its tensor transport, with no rationale recorded. Three
+# measured reasons to put ours on the 5GbE wire instead:
+#
+#   1. The CPU group carries NO tensor volume on this serve. The TP all-reduce
+#      runs on the DEVICE group through pynccl / the custom all-reduce
+#      (vllm/distributed/device_communicators/cuda_communicator.py:278ff).
+#      The CPU group carries pickled metadata (broadcast_object), barriers
+#      (parallel_state.py:1202-1207, which explicitly refuses the device
+#      group), and the one-shot handle exchanges that set up the RCCL
+#      communicator and the TP message queue (:518-520). The only tensor path
+#      that would ride it — broadcast_tensor_dict's is_cpu branch — belongs to
+#      the PIPELINE group, which is world_size 1 here and returns immediately
+#      (gpu_model_runner.py:4753 is its sole caller). Kilobytes at bring-up,
+#      not gigabytes per decode step.
+#   2. Wire and rail are the same latency tonight anyway: measured 2026-08-31,
+#      ping to the wire peer 10.99.1.2 is 97 us against 100 us to the rail
+#      peer 10.99.0.2. Metadata on the wire costs nothing measurable, and it
+#      keeps gloo's barriers off a rail whose RCCL transport of record is
+#      plain sockets sharing that same single TCP path.
+#   3. AVAILABILITY, the decisive one. NCCL_SOCKET_IFNAME above is COMPUTED
+#      and can drop to the enp191s0 wire-fallback rung on a night when no rail
+#      has a reachable peer. A gloo pin hardcoded to thunderbolt0 would then
+#      leave the CPU group dialling a dark rail while RCCL ran on the wire —
+#      and gloo has no verbs alternative and no second transport, so that
+#      failure is another silent connectFullMesh timeout with no diagnostic.
+#      The wire is the interface the whole bring-up already depends on: every
+#      `ssh $FN_WORKER_HOST` in fn-cluster-up.sh routes 10.99.9.2 via
+#      10.99.1.2 dev enp191s0. Pinning gloo there makes the CPU group's fate
+#      independent of rail health, and honours fn-env.sh's own doctrine above
+#      (dotfiles-observed.md 2.3: the rails carry tensors only).
+#
+# A NAME, NOT AN ADDRESS: gloo binds the interface's own IPv4 (10.99.1.1 here,
+# 10.99.1.2 there — a directly connected /30), so ONE interface name is
+# correct on BOTH ranks and byte-diffs clean in fn-preflight.sh.
+#
+# EXACTLY ONE NAME: unlike NCCL_SOCKET_IFNAME, which takes a comma list,
+# GLOO_SOCKET_IFNAME is a single interface-name lookup — a comma in it is not
+# a list, it is a name no interface has, and gloo fails on it. So the
+# rail-fallback branch below must take ${VAR%%,*}: fn_choose_rails above
+# accumulates `chosen="${chosen:+$chosen,}$rail"` and WILL emit
+# `thunderbolt0,thunderbolt1` the day rail 1 gets a /30 (dotfiles
+# modules/lowlat-cluster.nix parks it today; the moment it is unparked this
+# is live). NEVER point this at `lo` either: the fleet identity 10.99.9.x/32
+# lives there beside 127.0.0.1 and gloo would be free to pick the loopback all
+# over again — fn-cluster-up.sh rejects `lo` explicitly for that reason.
+export FN_WIRE_IFNAME="${FN_WIRE_IFNAME:-enp191s0}"
+if [ -n "${GLOO_SOCKET_IFNAME:-}" ]; then
+  # Already decided: fn-cluster-up.sh and fn-preflight.sh inject the
+  # COORDINATOR's choice into the worker's sourcing as a pre-set literal, the
+  # same way they inject NCCL_SOCKET_IFNAME, so one interface decision governs
+  # both ranks. Honour it and probe nothing — re-deriving here is how the two
+  # ranks come to disagree.
+  export GLOO_SOCKET_IFNAME
+elif [ -e "/sys/class/net/$FN_WIRE_IFNAME" ]; then
+  export GLOO_SOCKET_IFNAME="$FN_WIRE_IFNAME"
+else
+  # No wire on this node: fall back to the first rail the chooser above
+  # already proved carries a reachable peer. A stat, never a probe — the host
+  # tooling tests source this file with the rail chooser short-circuited
+  # (tests/test_host_tooling.py's _run_reap presets NCCL_SOCKET_IFNAME so
+  # sourcing never shells out to ip/ping) and must not acquire a second such
+  # dependency here.
+  echo "fn-env: WARNING: wire $FN_WIRE_IFNAME absent on this node; GLOO_SOCKET_IFNAME falls back to the first listed rail" >&2
+  export GLOO_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME%%,*}"
+fi
+
 # --- ray ---------------------------------------------------------------------
-# Propagate FN_* to the worker rank through ray. ESSENTIAL: without this the
-# two TP ranks diverge on every FN_ knob above.
-export VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY=FN_
+# Propagate FN_* AND GLOO_* to the worker rank through ray. ESSENTIAL: without
+# this the two TP ranks diverge on every FN_ knob above -- and on the gloo pin.
+# vllm/ray/ray_env.py:36-44 hardcodes the prefixes get_env_vars_to_copy()
+# replays into a ray actor: {VLLM_, FLASH_ATTENTION_, LMCACHE_, NCCL_, UCX_,
+# HF_, HUGGING_FACE_}. NCCL_ is in that set; GLOO_ IS NOT, so the gloo pin
+# needs the same explicit carry FN_ already has. The value is parsed as CSV
+# (ray_env.py:51-53, 83-85), hence the comma.
+#
+# READ THIS BEFORE REASONING FROM THIS LINE: it is a BACKSTOP here, not the
+# carrier. VLLM_USE_RAY_V2_EXECUTOR_BACKEND defaults to 1 (vllm/envs.py
+# :920-922), so `--distributed-executor-backend ray` selects RayExecutorV2
+# (v1/executor/abstract.py:61-67) and vllm/v1/executor/ray_executor.py is DEAD
+# CODE on this stack — do not cite it. RayExecutorV2 does NOT consult this
+# prefix list at all: it copies ALL of os.environ minus WORKER_SPECIFIC_ENV_VARS
+# (v1/executor/ray_env_utils.py get_driver_env_vars, called at
+# ray_executor_v2.py:361-363) and applies it with os.environ.setdefault
+# (:153-155), so a worker that already carries the pin keeps its own value and
+# a worker that does not gets the driver's. The prefix list still governs the
+# RayDistributedExecutor path (ray_executor.py:322-326, one env flip away) and
+# the ray core-engine actor manager (v1/engine/utils.py:437-443), and both
+# would silently drop GLOO_ without this.
+#
+# What ACTUALLY carries the pin to rank 1 tonight is the container env file:
+# fn-cluster-up.sh's ENV_FILTER -> podman --env-file -> `ray start` -> the
+# RayWorkerProc actor. That is why fn-cluster-up.sh asserts the pin's presence
+# in the built file rather than trusting this line.
+#
+# Bare export, not ${VAR:-...}: this is doctrine, not a tuning knob, and
+# tests/test_host_tooling.py greps for the literal prefix of this line.
+export VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY=FN_,GLOO_
 # Ray and ROCr visible-device handling fight on multi-rank boxes; opt out.
 export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES="${RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES:-1}"
 # On a 128 GB unified-memory box the serve legitimately claims most memory;

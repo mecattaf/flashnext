@@ -148,12 +148,18 @@ log "reap gate passed: zero residue on both nodes"
 
 # --- 4. containers on both nodes ---------------------------------------------
 # The env file is built PER NODE by sourcing fn-env.sh there — EXCEPT the
-# transport decision: NCCL_SOCKET_IFNAME and FN_TRANSPORT_RUNG are decided
-# ONCE, on the coordinator, and injected into the worker's sourcing as
-# pre-set literals (fn-env's ${VAR:-...} form honours them). Without this a
-# single lost ICMP packet on one node could bootstrap the two ranks on
-# different interfaces.
-ENV_FILTER='^(FN_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
+# transport decisions: NCCL_SOCKET_IFNAME, GLOO_SOCKET_IFNAME and
+# FN_TRANSPORT_RUNG are decided ONCE, on the coordinator, and injected into
+# the worker's sourcing as pre-set literals (fn-env's ${VAR:-...} form honours
+# them). Without this a single lost ICMP packet on one node could bootstrap
+# the two ranks on different interfaces.
+#
+# The GLOO_ prefix is LOAD-BEARING, not tidiness. This filter is the ONLY
+# thing that decides what reaches the container: podman is handed the filtered
+# file as --env-file below, so a GLOO_SOCKET_IFNAME exported perfectly in
+# fn-env.sh but not matched here never reaches `vllm serve` at all, and the
+# fix looks applied while the pair still dies on the loopback bind.
+ENV_FILTER='^(FN_|GLOO_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
 
 mkdir -p "$FN_STATE_DIR"
 LOCAL_ENV_FILE="$FN_STATE_DIR/container-env.list"
@@ -182,6 +188,24 @@ for cache_var in TORCHINDUCTOR_CACHE_DIR TRITON_CACHE_DIR; do
   log "cache pin verified: $cache_var=$cache_val (under the state dir, bind-mounted identically on both nodes)"
 done
 
+# VERIFY the gloo pin actually reached the container env file. This is the
+# exact trap that turns a correct-looking fix into a no-op: fn-env.sh can
+# export GLOO_SOCKET_IFNAME perfectly and the container still never sees it if
+# ENV_FILTER above stops carrying the GLOO_ prefix. The symptom is not a
+# missing variable — it is torch resolving gethostname() to NixOS's 127.0.0.2,
+# binding loopback with NO warning, and dying twenty minutes into engine-core
+# init on `Gloo connectFullMesh failed ... remote=[127.0.0.2]`. `lo` is
+# rejected too: the fleet /32 shares that interface with 127.0.0.1 and gloo
+# may pick either.
+gloo_ifname="$(grep -E '^GLOO_SOCKET_IFNAME=' "$LOCAL_ENV_FILE" | head -n1 | cut -d= -f2-)"
+case "$gloo_ifname" in
+  ""|lo|lo,*)
+    log "FATAL: GLOO_SOCKET_IFNAME is '$gloo_ifname' in the container env file; without a routable interface pin the CPU process group binds loopback and connectFullMesh can never cross the pair"
+    exit 1 ;;
+  *)
+    log "gloo pin verified: GLOO_SOCKET_IFNAME=$gloo_ifname reaches the container (ENV_FILTER carries the GLOO_ prefix)" ;;
+esac
+
 log "image: ensure the worker carries $FN_IMAGE"
 bash "$SCRIPT_DIR/fn-image-ship.sh"
 
@@ -190,6 +214,7 @@ worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
 worker "mkdir -p '$FN_STATE_DIR' \
   && ( set -a; \
        export NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME'; \
+       export GLOO_SOCKET_IFNAME='$GLOO_SOCKET_IFNAME'; \
        export FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG'; \
        source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
      | grep -E '$ENV_FILTER' | LC_ALL=C sort > '$REMOTE_TMP/env.list'"

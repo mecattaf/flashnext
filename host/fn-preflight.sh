@@ -35,23 +35,30 @@ record() { printf '%s\t%s\n' "$1" "$2" >> "$REPORT"; }
 worker() { ssh "$FN_WORKER_HOST" "$@"; }
 
 # --- 1. byte-diff of both ranks' exported doctrine env ------------------------
-ENV_FILTER='^(FN_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
+# GLOO_ joins the graded prefixes: GLOO_SOCKET_IFNAME is an interface NAME,
+# identical on both nodes by construction, so it byte-diffs clean — and a
+# future edit that made it host-conditional is exactly the divergence this
+# gate exists to catch (one rank listening where the other never dials).
+# It must also match fn-cluster-up.sh's copy of this filter, which is what
+# builds podman's --env-file; the two strings are independent literals.
+ENV_FILTER='^(FN_|GLOO_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
 ( set -a; source "$SCRIPT_DIR/fn-env.sh" >/dev/null; env ) \
   | grep -E "$ENV_FILTER" | LC_ALL=C sort > "$TMP/env.coordinator"
 
-# The transport decision is made ONCE on the coordinator and injected into
+# The transport decisions are made ONCE on the coordinator and injected into
 # the worker's sourcing as pre-set literals (mirrors fn-cluster-up.sh): the
 # byte-diff then verifies everything else AND that both ranks agree on the
-# coordinator-decided transport.
+# coordinator-decided transport, data plane and control plane alike.
 REMOTE_TMP="$(worker 'mktemp -d')"
 worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
 # Separate `export` statements, NOT prefix assignments on `source`: bash
 # applies a prefix assignment only for the duration of the builtin and
 # RESTORES the prior (unset) state when it returns, undoing the export
-# fn-env.sh performs inside. The worker then carried neither variable and
-# the byte-diff failed on exactly these two lines.
+# fn-env.sh performs inside. The worker then carried none of these variables
+# and the byte-diff failed on exactly the injected lines.
 worker "( set -a; \
     export NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME'; \
+    export GLOO_SOCKET_IFNAME='$GLOO_SOCKET_IFNAME'; \
     export FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG'; \
     source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
   | grep -E '$ENV_FILTER' | LC_ALL=C sort" > "$TMP/env.worker"
