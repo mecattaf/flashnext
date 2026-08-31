@@ -1,0 +1,12 @@
+{
+ "step": "residency",
+ "status": "fail",
+ "ts": "2026-08-31T17:16:37",
+ "data": {
+  "warmed_decode_tokens": 64,
+  "read_after_warmed_decode": true,
+  "error_metrics": "AttributeError: 'bytes' object has no attribute 'encode'",
+  "table_gpu_resident_bytes": 0,
+  "ple_mmap_log_lines": 7
+ }
+}

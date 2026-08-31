@@ -1,0 +1,23 @@
+{
+ "step": "fidelity",
+ "status": "pass",
+ "ts": "2026-08-31T17:29:04",
+ "data": {
+  "files": [
+   "fidelity-0.json",
+   "fidelity-1.json",
+   "fidelity-2.json"
+  ],
+  "sha256": {
+   "fidelity-0.json": "bd7a45b0b78dd993b03e07086d8f412c4177faaa5a0192573b94a1a22ffe0617",
+   "fidelity-1.json": "abed6b92a884fdd959a9f3f897cb46c9544d760d4c1a62473a3f89a460089d26",
+   "fidelity-2.json": "9cf00c516fdf9d5f71ea209423562e0cd0d5fda20f95f9af33cd024bfb96e0bf"
+  },
+  "losses_nll": [
+   0.7286483068530174,
+   0.612581138090718,
+   0.9629671879774833
+  ],
+  "prompts": 3
+ }
+}

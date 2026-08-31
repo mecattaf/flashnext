@@ -1,0 +1,100 @@
+{
+ "step": "tp2",
+ "status": "pass",
+ "ts": "2026-08-31T17:28:27",
+ "data": {
+  "byte_identical_repeat": true,
+  "completion_bytes": 950,
+  "completion_tokens": 300,
+  "preflight": {
+   "env_byte_diff": "pass",
+   "rails_chosen": [
+    "rail0"
+   ],
+   "transport_rung": "rail0-sockets",
+   "latency_budget_us": 200,
+   "latency_hold": {
+    "coordinator": {
+     "unit": "active",
+     "cpu_dma_latency": "100"
+    },
+    "worker": {
+     "unit": "active",
+     "cpu_dma_latency": "100"
+    }
+   },
+   "rails": {
+    "rail0": {
+     "coordinator": {
+      "speed_mbps": "40000",
+      "rtt_us": "119"
+     },
+     "worker": {
+      "speed_mbps": "40000",
+      "rtt_us": "124"
+     }
+    },
+    "rail2": {
+     "coordinator": {
+      "speed_mbps": "40000",
+      "rtt_us": "118"
+     },
+     "worker": {
+      "speed_mbps": "40000",
+      "rtt_us": "118"
+     }
+    }
+   }
+  },
+  "swap_proxy": {
+   "coordinator": {
+    "action": "stopped",
+    "arrival": "active",
+    "resolved_by": "unit-scan",
+    "state_after": "inactive",
+    "stop_result": "ok",
+    "unit": "llama-swap.service"
+   },
+   "port": "9292",
+   "worker": {
+    "action": "stopped",
+    "arrival": "active",
+    "resolved_by": "unit-scan",
+    "state_after": "inactive",
+    "stop_result": "ok",
+    "unit": "llama-swap.service"
+   }
+  },
+  "tp2_guards": {
+   "status": "pass",
+   "summary": {
+    "digest": "7bbadf42826324d586224e2b75f9d24de9356ee28e7630a5a33e0fb5083b2244",
+    "predicted_gib_per_rank": 79.65,
+    "routed_experts": 512,
+    "schedule_counts": {
+     "full_attention": 12,
+     "linear_attention": 36
+    },
+    "shard_digests": [
+     "f37c019e6df37d085fff6ef58c815146ddc7d9653573d35bbba294729844dc7a",
+     "54f6c511db0b5da23aa7a4f96f2e8daf0e3a43bc5672f8c514b05dfdfd8eca7c"
+    ],
+    "top_k": 10
+   },
+   "assertions": {
+    "A1-moe-routed-expert-parity": true,
+    "A2-moe-shared-expert-policy": true,
+    "A3-qsa-head-parity": true,
+    "A4-qsa-gqa-group-integrity": true,
+    "A5-gdn-head-parity": true,
+    "A6-fp8-block-alignment": true,
+    "A7-gate-schedule-from-tensors": true,
+    "A8-rank-derivation-parity": true,
+    "S1-selection-time-sharding": true,
+    "S2-both-moe-paths-sharded": true,
+    "S3-distinct-shard-checksums": true,
+    "S4-predicted-rank-residency": true
+   }
+  }
+ }
+}

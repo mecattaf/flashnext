@@ -1,0 +1,11 @@
+{
+ "step": "context",
+ "status": "fail",
+ "ts": "2026-08-31T17:44:03",
+ "data": {
+  "target_context": 262144,
+  "short_prompt_tokens": 53,
+  "short_decode_tps": 7.89,
+  "error": "RuntimeError: no usable decode window in the streamed response"
+ }
+}

@@ -1,7 +1,7 @@
 {
  "step": "preflight",
  "status": "pass",
- "ts": "2026-08-31T16:08:52",
+ "ts": "2026-08-31T17:19:36",
  "data": {
   "env_byte_diff": "pass",
   "rails_chosen": [
@@ -23,21 +23,21 @@
    "rail0": {
     "coordinator": {
      "speed_mbps": "40000",
-     "rtt_us": "145"
+     "rtt_us": "119"
     },
     "worker": {
      "speed_mbps": "40000",
-     "rtt_us": "126"
+     "rtt_us": "124"
     }
    },
    "rail2": {
     "coordinator": {
      "speed_mbps": "40000",
-     "rtt_us": "119"
+     "rtt_us": "118"
     },
     "worker": {
      "speed_mbps": "40000",
-     "rtt_us": "117"
+     "rtt_us": "118"
     }
    }
   }

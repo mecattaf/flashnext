@@ -1,0 +1,39 @@
+{
+ "step": "residency",
+ "status": "pass",
+ "ts": "2026-08-31T17:28:38",
+ "data": {
+  "warmed_decode_tokens": 64,
+  "read_after_warmed_decode": true,
+  "gtt_gib_per_rank": {
+   "coordinator": 77.45,
+   "worker": 75.67
+  },
+  "gtt_source_per_rank": {
+   "coordinator": "gtt",
+   "worker": "gtt"
+  },
+  "rss_gib_per_rank": {
+   "coordinator": 8.94,
+   "worker": 8.07
+  },
+  "table_page_cache": {
+   "coordinator": {
+    "files_matched": 0,
+    "files": [],
+    "cached_pages": 0,
+    "tool": "fincore",
+    "cached_gib": 0.0
+   },
+   "worker": {
+    "files_matched": 0,
+    "files": [],
+    "cached_pages": 0,
+    "tool": "fincore",
+    "cached_gib": 0.0
+   }
+  },
+  "table_gpu_resident_bytes": 0,
+  "ple_mmap_log_lines": 6
+ }
+}

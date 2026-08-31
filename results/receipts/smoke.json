@@ -1,0 +1,25 @@
+{
+ "step": "smoke",
+ "status": "pass",
+ "ts": "2026-08-31T15:00:26",
+ "data": {
+  "arch": {
+   "gcn_arch": "gfx1151",
+   "on_cdna": false,
+   "supports_fp8_stock_predicate": false
+  },
+  "fp8_cast": {
+   "e4m3fn_alloc_and_cast": true
+  },
+  "registry": {
+   "model_arch_registered": true
+  },
+  "aperture": {
+   "ttm_pages_limit": 33554432
+  },
+  "admission": {
+   "fp8_block_moe_admitted": true,
+   "reason": "boolean predicate (patches/0008)"
+  }
+ }
+}
