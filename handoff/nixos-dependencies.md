@@ -105,6 +105,11 @@ The host fixes remove the causes. These reduce the blast radius when the next on
 
 Run these from a flashnext worktree on the coordinator.
 
+**Ordering note:** the host fixes land first and the twins are rebooted **once, at the end**.
+Rebooting first would re-run `usb4-stream.nix`'s boot-time provisioner while it is still broken,
+which is how the rings leaked in the first place. So the reboot is simultaneously the recovery
+for #272, the activation for #280's kernel parameter, and the verification for #275.
+
 **After #272 (reboot):**
 ```bash
 # the rings should be back — probe first, it opens nothing
