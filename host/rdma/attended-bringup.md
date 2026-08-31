@@ -16,8 +16,9 @@ fleet's own `flake.nix`/host configs, cross-checked directly):
 >    longer exist on either twin: dotfiles#266 pins each name to a physical
 >    cable via `.link Name=` on the NHI's PCI path, because the probe-order
 >    names flipped on both twins at the 2026-08-31 12:27 reboot and put rail
->    0's `/30` on the wrong cable. Substitute `rail0` for `thunderbolt0`
->    everywhere below, including in step 5.
+>    0's `/30` on the wrong cable. The body below has been swept to the new
+>    names — no substitution is needed while reading it. The old names survive
+>    only where they name a past event.
 > 2. **The NHI functions in the table are the WORKER's**, presented as if they
 >    were fleet-wide — the same error dotfiles#267 fixed. Per host: cable A
 >    (rail0) is `c5:00.6` on the coordinator and `c4:00.5` on the worker;
@@ -76,7 +77,7 @@ optional tomorrow.
    comparing verbs-on-rail-0 against a 5 GbE baseline measures two different
    cables, not two transports. On a wire-fallback night the attended morning's
    **first** transport act is healing rail 0 (the dark rail is asymmetric:
-   the worker's `thunderbolt0` has read NO-CARRIER through its own clean
+   the worker's rail 0 has read NO-CARRIER through its own clean
    reboot, so the coordinator's reboot alone may not heal it -- replug cable
    A, reboot the worker, re-check) and **re-banking a rail-sockets bench**.
    Verbs work starts after that receipt exists, not before.
@@ -136,7 +137,7 @@ Thunderbolt down has severed the one channel that could push it a fix.
    address instead (`assert self.deploy.nodes.${strixWorker}.hostname == "10.99.0.2"`
    and the alias-membership assert beside it).
 3. **Deploy-test this change with rail 0 administratively down**
-   (`sudo ip link set thunderbolt0 down` on the worker) before trusting it --
+   (`sudo ip link set rail0 down` on the worker) before trusting it --
    confirm deploy-rs can still reach and activate a config on the worker with
    zero Thunderbolt connectivity. This is the actual rehearsal for the
    scenario this fix exists to survive.
@@ -173,12 +174,21 @@ Do this fresh, every session -- do not trust yesterday's run.
    remains implemented-but-off by design. Before touching RDMA, confirm on
    both nodes:
    ```
-   cat /dev/cpu_dma_latency | od -An -tu4   # expect 0
-   ip link show thunderbolt0 | grep mtu     # expect mtu 65520
+   cat /dev/cpu_dma_latency | od -An -tu4   # expect 100 (the configured
+                                            # pmqosLatencyUs, NOT 0 -- see below)
+   ip link show rail0 | grep mtu            # expect mtu 1500 (jumbo is OFF by
+                                            # design, per this same paragraph)
    ```
-   If either is missing after a reboot, re-apply it **before** running the
-   A/B in `ab-protocol.md` -- a crippled TCP baseline (577us RTT instead of
-   the held ~77us) invalidates the comparison in RDMA's favor.
+   **The expected budget is 100, not 0.** dotfiles#257 made the hold an option
+   (`pmqosLatencyUs`, default 100) after measuring the cpuidle exit latencies
+   on this silicon: POLL 0us, C1 1us, C2 18us, C3 350us. Blocking C3 is worth
+   ~7x of the win; the old POLL floor bought only the last ~62us and cost
+   ~60 W/box. Set `FN_PMQOS_BUDGET` if you are deliberately running the
+   C1-only (budget 1) arm. Do NOT "fix" a reading of 100 by reverting the
+   fleet to 0.
+   An unheld baseline still invalidates the comparison in RDMA's favor, so
+   confirm the hold is present and IDENTICAL on both ends -- a one-sided hold
+   measures ~468us and reads as though the knob did nothing.
 4. **Userspace verbs provider: already realized, don't rebuild it.**
    nix-strix-halo already has `thunderbolt-ibverbs-0.3.4` and
    `rdma-core-usb4-63.0` in the store on both nodes. `fetch-and-build.sh`
@@ -260,9 +270,27 @@ continuing.
 
 ---
 
-## 5. Open the firewall for rail 0 -- scoped, not blanket trust ⚠
+## 5. Open the firewall for rail 0 -- ALREADY DONE, verify only ✅
 
-Neither host trusts `thunderbolt0` today (both firewalls list only
+> **This step landed declaratively on 2026-08-31 and needs no action.**
+> `dotfiles modules/fn-rdma.nix:366` carries
+> `networking.firewall.interfaces.rail0.allowedUDPPorts = [ 4791 ];`, deployed
+> and live on both twins. Do not re-apply it as a "temporary config delta";
+> verify and move on:
+> ```
+> sudo iptables-save | grep 'rail0'
+> # expect BOTH:
+> #   -A nixos-fw -i rail0 -p udp -m udp --dport 4791 -j nixos-fw-accept
+> #   -A nixos-fw -i rail0 -p tcp -m tcp --dport 1024:65535 -j nixos-fw-accept
+> ```
+> (This fleet runs the **iptables** backend, not nftables — `nft list ruleset`
+> returns empty here and will look like the rule is missing when it is not.
+> Verified live on the coordinator 2026-08-31.)
+> The rationale below is kept because it explains why this is a scoped
+> admission rather than a trust flip — that reasoning still governs any future
+> port you are tempted to open here.
+
+Neither host blanket-trusts `rail0` (both firewalls list only
 `enp191s0` in `trustedInterfaces`, confirmed directly against
 `hosts/coordinator/eth-fleet.nix:80` and `hosts/worker/default.nix:321`).
 RDMA/RoCEv2 traffic (and CM connection setup) needs an explicit admission on
@@ -272,11 +300,11 @@ existing pattern for scoped per-interface admission (used for `wlp192s0` and
 `tailscale0` elsewhere in the same tree) is the right shape to follow here:
 
 ```nix
-networking.firewall.interfaces.thunderbolt0.allowedUDPPorts = [ 4791 ];  # RoCEv2
+networking.firewall.interfaces.rail0.allowedUDPPorts = [ 4791 ];  # RoCEv2
 ```
 
-Push this to both nodes (bundle it with step 6's temporary config delta,
-same deploy). Do **not** add `thunderbolt0` to `trustedInterfaces` -- that
+That is what `fn-rdma.nix` now carries; it is already on both nodes, so there
+is nothing to push. Do **not** add `rail0` to `trustedInterfaces` -- that
 opens every port on the interface, not just the one RDMA needs, and is a
 much bigger and more permanent-feeling change than this attended session
 calls for.
@@ -327,7 +355,7 @@ step 6 is all-or-nothing by construction (patched core+net together, or
 stock core+net together, never a mix, on either box individually). It says
 nothing about the two hosts running *different* module versions from each
 other during the window between reboots, because they don't have to agree:
-`thunderbolt0`'s IP link (what `ping`, ssh, and the `tb-link-heal` reachability
+`rail0`'s IP link (what `ping`, ssh, and the `tb-link-heal` reachability
 check all use) is packets over a USB4 tunnel, not a shared DMA-ring ABI --
 that ABI dependency is local to each host's own core+net pairing. The one
 thing that **does** require both hosts to already be running the matched set
@@ -337,7 +365,7 @@ not just the rebooting one.
 **Sequence:**
 1. Reboot the **worker only** onto the step 6 config.
 2. Verify it's back, entirely over the 5GbE wire (step 1 made this
-   possible): ssh reachable at its wire address, `thunderbolt0` retrained
+   possible): ssh reachable at its wire address, `rail0` retrained
    with its `10.99.0.2` address (ordinary IP-link connectivity to the
    still-stock coordinator, safe per the reasoning above), and
    `tb-link-heal.timer` reporting green (no PD-reset stamp freshly written).
@@ -348,7 +376,7 @@ not just the rebooting one.
    whole sequence, not folded into it.
 
 **What a wedged port controller looks like, on whichever box is mid-reboot:**
-- `thunderbolt0` never appears, or appears with no carrier and no
+- `rail0` never appears, or appears with no carrier and no
   `10.99.0.x` address after a couple of minutes.
 - `ls /sys/bus/thunderbolt/devices/` on either box shows no peer XDomain
   entry (no `N-1`..`N-9`-shaped name) -- the "PD-blind" signature.
@@ -379,7 +407,7 @@ sequentially instead of together.
 
 Confirm first, on both:
 ```
-ip -4 addr show thunderbolt0   # expect inet 10.99.0.1/30 (coordinator) or 10.99.0.2/30 (worker)
+ip -4 addr show rail0   # expect inet 10.99.0.1/30 (coordinator) or 10.99.0.2/30 (worker)
 ```
 
 Then, on each node, load the verbs provider by hand -- attended, not a boot
@@ -391,7 +419,7 @@ sudo insmod <staged>/thunderbolt_ibverbs.ko \
   profile=linux_perf bind_services=1 allocate_rings=1 start_rings=1 \
   negotiate_native=1 enable_tunnels=1 register_verbs=1 \
   native_tx_max_inflight=128 \
-  roce_netdev=thunderbolt0
+  roce_netdev=rail0
 ```
 
 Note what is **not** in that command: `native_rc_split_zcopy=1`. That knob
@@ -420,7 +448,9 @@ D=$(ls /sys/class/infiniband/ | head -1)
 > boot-time `-12` probe error on the second advertised lane per cable is
 > permanent and cosmetic (the NHI has exactly 3 DMA rings per controller:
 > control + net + ONE RDMA lane; the second native lane can never allocate).
-> What still holds: everything runs on `usb4_rdma0` (domain0, c4:00.5), and
+> What still holds: everything runs on `usb4_rdma0` — the cable-A NHI, which
+> is `c4:00.5`/domain0 on the worker but `c5:00.6`/domain1 on the coordinator
+> (dotfiles#267: these are per-host, not fleet-wide) — and
 > `NCCL_IB_HCA` must be that **exact** string -- both devices advertise rail
 > 0's GID, so a prefix match or `usb4_rdma5` silently routes onto the wrong
 > wire (see `ab-protocol.md`, XDomain wedge discipline).
@@ -432,7 +462,7 @@ cat /sys/class/infiniband/usb4_rdma0/ports/1/gids/1     # non-zero (RoCEv2 IPv4 
 ibv_devices                                             # lists usb4_rdma0
 ```
 
-If `gids/1` is all-zero, `thunderbolt0` doesn't have its `10.99.0.x` address
+If `gids/1` is all-zero, `rail0` doesn't have its `10.99.0.x` address
 yet -- fix that first, don't chase the GID table. If `usb4_rdma0` never
 appears, re-check vermagic on both nodes before anything else. If
 `ibv_devices` behaves oddly despite the kernel side looking healthy, revisit
@@ -457,12 +487,20 @@ The single-rail contract is about which device carries traffic:
 `usb4_rdma0`, exactly, always):
 ```
 ls /sys/class/infiniband/                 # usb4_rdma0 present; usb4_rdma5 beside it is expected on this build
-readlink -f /sys/class/infiniband/usb4_rdma0/device      # resolve back to c4:00.5 (domain0), NOT c4:00.6 (domain1)
-ip -4 addr show thunderbolt1              # link-local only, unchanged from before this checklist started
+readlink -f /sys/class/infiniband/usb4_rdma0/device
+# PER-HOST, and this is the dotfiles#267 trap: cable A is NOT the same NHI on
+# both twins. Expect the CABLE-A function for the host you are standing on:
+#   coordinator -> 0000:c5:00.6 (domain1)   [cable B is c5:00.5/domain0]
+#   worker      -> 0000:c4:00.5 (domain0)   [cable B is c4:00.6/domain1]
+# Resolving to the other function on that host means RDMA bound the BENCH
+# cable, not the tensor rail. The one-liner that is correct on either host:
+#   readlink -f /sys/class/net/rail0/device   # must equal the above
+ip -4 addr show rail2                     # expect inet 10.99.2.1/30 (coordinator) or 10.99.2.2/30 (worker)
+                                          # NOTE: rail 2 stopped being link-local at dotfiles#274
 ```
 
 Do not run anything resembling a "second cable" prep step. There is no such
-step in this package, deliberately -- see REPORT.md. `thunderbolt1` stays
+step in this package, deliberately -- see REPORT.md. `rail2` stays
 plain socket transport, exactly as it was overnight.
 
 ---
@@ -586,7 +624,7 @@ barrier discipline in `ab-protocol.md`.
 
 That is the load-bearing reason **no verbs rung may ever appear in an
 unattended fallback ladder**: the rung it would fall back to (sockets on
-`thunderbolt0`) is destroyed by the very failure it is falling back from. A
+`rail0`) is destroyed by the very failure it is falling back from. A
 fallback sharing a failure domain with the thing it backs up is not a
 fallback. Verbs stays attended, on one rail, with a human who can reach the
 console -- which is what this entire document is.

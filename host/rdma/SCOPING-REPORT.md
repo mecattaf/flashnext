@@ -1,5 +1,16 @@
 # RDMA bring-up package -- what's verified, what's assumed, what's dropped
 
+> **HISTORICAL RECORD, corrected 2026-08-31.** This documents a scoping pass as
+> it was performed; the "I grepped X and it said Y" findings are left as they
+> were read, because that is what a record is for. Three things it asserts have
+> since changed, and are corrected inline below:
+> the netdevs are now `rail0`/`rail2`, not `thunderbolt0`/`thunderbolt1`
+> (dotfiles#266); rail 2 is no longer link-local, it carries `10.99.2.x/30`
+> (dotfiles#274); and the scoped RoCEv2 firewall admission this report
+> describes as something `attended-bringup.md` step 5 *would add* has since
+> landed declaratively in `dotfiles modules/fn-rdma.nix:366` and is live on
+> both twins — step 5 is now verify-only.
+
 Scope: `host/rdma/fetch-and-build.sh`, `host/rdma/attended-bringup.md`,
 `host/rdma/ab-protocol.md`. No build, insmod, or modprobe was run producing
 this package; no file outside this scratchpad output tree was written.
@@ -57,15 +68,17 @@ verified back over the 5GbE wire), never the reference's "both together."
    `attended-bringup.md` step 2 item 4 and step 9, rather than assumed
    compatible.
 
-3. **`thunderbolt0` is not trusted on either host -- independently
+3. **The tensor rail is not blanket-trusted on either host -- independently
    verified, not just taken on report.** I grepped the actual
    `hosts/coordinator/eth-fleet.nix:80` and `hosts/worker/default.nix:321`
    in `/home/tom/mecattaf/dotfiles`: both set
    `networking.firewall.trustedInterfaces = [ "enp191s0" ];`, confirming
-   `thunderbolt0` gets no firewall admission of any kind today.
-   `attended-bringup.md` step 5 adds a scoped
-   `networking.firewall.interfaces.thunderbolt0.allowedUDPPorts = [ 4791 ]`
-   (RoCEv2) rather than trusting the whole interface -- matching the
+   the rail got no firewall admission of any kind *at the time of this pass*.
+   [CORRECTED 2026-08-31: `modules/fn-rdma.nix:366` now carries
+   `networking.firewall.interfaces.rail0.allowedUDPPorts = [ 4791 ]`, deployed
+   and verified live via `iptables-save` on both twins; step 5 is verify-only.]
+   The admission is scoped (RoCEv2 only) rather than trusting the whole
+   interface -- matching the
    per-interface scoping idiom already used elsewhere in that same repo
    (`wlp192s0`, `tailscale0` in `hosts/coordinator/*.nix`,
    `hosts/worker/immich-ml.nix`), and matching that repo's own explicit
@@ -95,10 +108,12 @@ original AGENTS.md/tbv reference tree and, this pass, the live
 - The exact pins above, the gate order (kernel match -> Secure Boot ->
   fetch -> patch-apply-with-verify -> build), and the "matched set or the box
   panics on cable connect" rule -- from `AGENTS.md` 1.1-1.5 and `tbv/README.md`.
-- The topology: `coordinator`/`worker`, `thunderbolt0` = rail 0 =
-  `10.99.0.1`/`10.99.0.2` (`/30`), `thunderbolt1` = rail 1 link-local, and
+- The topology: `coordinator`/`worker`, `rail0` = rail 0 =
+  `10.99.0.1`/`10.99.0.2` (`/30`), `rail2` = rail 2 = `10.99.2.1`/`10.99.2.2`
+  (`/30` since dotfiles#274 — it was link-local when this pass ran), and
   `enp191s0` = the 5GbE control wire at `10.99.1.1`/`.2` -- from
   `final-qwen-report.md` section 2 and `spec.md`'s vocabulary section.
+  Both rail names are cable-bound via `.link Name=` since dotfiles#266.
 - The single-rail rule and its exact failure mode (source-blind control
   handler cross-matching HELLOs, poisoning HopID state) -- from
   `final-qwen-report.md` section 7 item 3 and the reference's own
@@ -114,7 +129,7 @@ original AGENTS.md/tbv reference tree and, this pass, the live
   and 7.
 - This pass, directly against `/home/tom/mecattaf/dotfiles`: the worker's
   Thunderbolt-only deploy path, the `-F /dev/null` ssh hardening, and both
-  hosts' `trustedInterfaces` excluding `thunderbolt0` -- all three read
+  hosts' `trustedInterfaces` excluding the tensor rail -- all three read
   from the actual files, not taken solely on the team lead's word, and all
   three matched what was reported.
 
@@ -174,7 +189,7 @@ danger doesn't arise regardless of reboot ordering. What the two hosts'
 *Thunderbolt IP link* needs to keep working across a version-skew window
 (worker on the new module set, coordinator still stock) is ordinary packet
 connectivity, not a shared ring ABI -- so `ping`/ssh/`tb-link-heal` over
-`thunderbolt0` during that window is expected to work. The one thing that
+`rail0` during that window is expected to work. The one thing that
 genuinely does need both hosts already matched is RDMA/ibverbs itself,
 which is why `attended-bringup.md` step 8 explicitly gates the RoCE
 bring-up on both nodes having already rebooted and verified -- it never
