@@ -1,0 +1,38 @@
+23:47Z LANE-NOW: rdma-package
+23:49Z LANE-NOW: idle
+23:49Z EXIT rdma-package: success status=0
+23:50Z LANE-NOW: engram-registration
+23:50Z EXIT engram-registration: success status=0
+00:16Z LANE-NOW: receipt-durability
+00:16Z EXIT receipt-durability: success status=0
+00:17Z LANE-NOW: receipt-durability
+00:25Z LANDED  receipt-durability: Receipts survive the lane worktree, and the closing gate stops confusing 'nothing ran' wit
+00:25Z LANE-NOW: allreduce-instrument
+00:35Z LANDED  allreduce-instrument: Fourth fn_* instrument: the all-reduce timer, without which 'decode is allreduce-dominat
+00:35Z LANE-NOW: idle
+00:36Z LANE-NOW: tp2-guards
+00:53Z LANDED  tp2-guards: TP=2 fails loudly and early: swap-proxy arbitration, the eight parity assertions, and selection-ti
+00:53Z LANE-NOW: idle
+00:53Z NONZERO cp-build: exit-code status=1  <<< INVESTIGATE
+00:54Z LANE-NOW: cp-build
+00:54Z NONZERO cp-build: exit-code status=1  <<< INVESTIGATE
+00:55Z LANE-NOW: idle
+00:55Z NONZERO cp-build: exit-code status=1  <<< INVESTIGATE
+00:58Z LANDED  cp-build: make the build checkpoint pure, and its receipt durable
+01:36Z LANE-NOW: cp-smoke
+01:37Z LANE-NOW: cp-tp2
+01:37Z NONZERO cp-tp2: exit-code status=1  <<< INVESTIGATE
+01:39Z LANE-NOW: idle
+01:41Z LANDED  tp2: inject the coordinator's transport decision with export, not a prefix assignment
+02:20Z LANE-NOW: cp-tp2
+02:23Z NONZERO cp-tp2: exit-code status=127  <<< INVESTIGATE
+02:24Z LANDED  container: install Ray — multi-node TP=2 cannot stand up without it
+02:24Z LANE-NOW: idle
+03:12Z LANE-NOW: cp-tp2
+03:21Z NONZERO cp-tp2: exit-code status=1  <<< INVESTIGATE
+03:22Z LANDED  tp2: declare one GPU per ray node — ray does not autodetect this APU
+03:22Z LANE-NOW: idle
+04:05Z LANE-NOW: cp-tp2
+04:18Z LANDED  tp2: pin ray's node IP to the fleet identity — it was advertising the house wifi
+04:52Z NONZERO cp-tp2: exit-code status=1  <<< INVESTIGATE
+04:53Z NONZERO cp-tp2: success status=TERM  <<< INVESTIGATE
