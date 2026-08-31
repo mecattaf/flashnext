@@ -263,7 +263,7 @@ def probe(node):
                              text=True, check=True).stdout
     else:
         out = subprocess.run(["ssh", WORKER, "python3", "-"],
-                             input=metrics_src.encode(), capture_output=True,
+                             input=metrics_src, capture_output=True,
                              text=True, check=True).stdout
     return json.loads(out.strip().splitlines()[-1])
 
