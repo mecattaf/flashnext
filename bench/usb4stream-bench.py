@@ -173,7 +173,24 @@ CONFIGFS_ROOTS = tuple(
         "/sys/kernel/config/thunderbolt_stream",
     ) if p
 )
-FUNCTION_GROUP = "fn0"
+# The stream FUNCTION group inside a service. Both twins provision fn0 and fn1
+# on every cable; they are independent stream pairs on the SAME router, each
+# with its own hopid pair. fn0 is the default because it is what the lane and
+# the memo were written against.
+#
+# It is selectable because a function's hopids are assigned AT PROVISIONING
+# TIME and are not all equally usable. Measured 2026-08-31: cable B's fn0
+# holds out_hopid 8 on the coordinator and in_hopid 8 on the worker, and 8 is
+# exactly the hop thunderbolt_net occupies on every host router in this fleet
+# (in_hop_id 0x08 on each port2). Cable B's fn1 (9/10 and 10/9) and cable A's
+# fn0 (9/9 both ends) have no such overlap. Opening a function whose hopid the
+# netdev already holds on the same cable is the hop-table corruption this file
+# exists to avoid, so the operator must be able to name the function without
+# editing the file — and WITHOUT writing configfs to re-provision, which this
+# file never does.
+DEFAULT_FUNCTION = "fn0"
+FUNCTIONS = ("fn0", "fn1")
+FUNCTION_GROUP = DEFAULT_FUNCTION   # retained: the historical name/default
 
 # Control-wire and serve-detection knobs; defaults mirror host/fn-env.sh.
 # Worker-side actions ride the 5 GbE stable fleet identity, NEVER a 10.99.0.x
@@ -548,21 +565,23 @@ def stream_service(rail: str) -> tuple[str, str]:
     raise ResolveError(f"no sibling service with key=stream under {xdomain}")
 
 
-def configfs_group(service_path: str) -> str:
-    """The fn0 configfs group for this service. READ-ONLY, always."""
+def configfs_group(service_path: str,
+                   function: str = DEFAULT_FUNCTION) -> str:
+    """The named function's configfs group for this service. READ-ONLY."""
     name = os.path.basename(service_path)
     tried = []
     for root in CONFIGFS_ROOTS:
-        group = os.path.join(root, name, FUNCTION_GROUP)
+        group = os.path.join(root, name, function)
         tried.append(group)
         if os.path.isdir(group):
             return group
     raise ResolveError(
-        f"{FUNCTION_GROUP} configfs group absent for service {name} "
+        f"{function} configfs group absent for service {name} "
         f"(looked under: {', '.join(tried)})", configfs=True)
 
 
-def resolve_stream_device(cable: str = DEFAULT_CABLE) -> dict:
+def resolve_stream_device(cable: str = DEFAULT_CABLE,
+                          function: str = DEFAULT_FUNCTION) -> dict:
     """The whole chain on THIS node. Reads sysfs/configfs; opens nothing.
 
     the chosen cable's netdev (cable_netdev: the /30 holder for A, the other
@@ -577,7 +596,7 @@ def resolve_stream_device(cable: str = DEFAULT_CABLE) -> dict:
     """
     rail, addr = cable_netdev(cable)
     xdomain, service = stream_service(rail)
-    group = configfs_group(service)
+    group = configfs_group(service, function)
     index = _read_attr(os.path.join(group, "index"))
     if index is None or not index.isdigit():
         raise ResolveError(f"{group}/index is unreadable or not an index",
@@ -586,6 +605,7 @@ def resolve_stream_device(cable: str = DEFAULT_CABLE) -> dict:
     peer = peer_address(rail, addr, cable)
     return {
         "cable": cable,
+        "function": function,
         "rail": rail,
         "rail_addr": addr,
         "hwaddr": hardware_address(rail),
@@ -702,7 +722,8 @@ def serve_is_up() -> bool:
     return _podman_running(_ssh_argv(remote))
 
 
-def serve_blocks_run(cable: str, base: dict) -> bool:
+def serve_blocks_run(cable: str, base: dict,
+                     function: str = DEFAULT_FUNCTION) -> bool:
     """Does a live serve forbid a run on THIS cable? Called only if one is up.
 
     The precondition is not "a serve exists somewhere"; it is "a wedge here
@@ -733,7 +754,7 @@ def serve_blocks_run(cable: str, base: dict) -> bool:
                         "AFTER the pair is torn down")
         return True
     try:
-        local = resolve_stream_device(cable)
+        local = resolve_stream_device(cable, function)
         rail, _addr = rail_netdev()
     except ResolveError:
         # We cannot establish the hardware relation. Do not skip on that
@@ -761,7 +782,8 @@ def serve_blocks_run(cable: str, base: dict) -> bool:
     return False
 
 
-def probe_peer(source: bytes, cable: str) -> dict:
+def probe_peer(source: bytes, cable: str,
+               function: str = DEFAULT_FUNCTION) -> dict:
     """Run THIS FILE on the worker in probe role over the control wire.
 
     Streamed on stdin — never copied to the worker's disk. Read-only there.
@@ -769,7 +791,8 @@ def probe_peer(source: bytes, cable: str) -> dict:
     survive ssh, and a peer that resolved the other cable is the mismatched
     open this whole file exists to prevent.
     """
-    command = "python3 - --role probe --cable " + shlex.quote(cable)
+    command = ("python3 - --role probe --cable " + shlex.quote(cable)
+               + " --function " + shlex.quote(function))
     proc = subprocess.run(_ssh_argv(command),
                           input=source, capture_output=True, timeout=60)
     text = proc.stdout.decode(errors="replace").strip()
@@ -990,15 +1013,16 @@ def payload_buffer() -> bytes:
 # roles
 # ---------------------------------------------------------------------------
 
-def run_probe(cable: str) -> int:
+def run_probe(cable: str, function: str = DEFAULT_FUNCTION) -> int:
     """Read-only. Resolves the named cable, reports, opens nothing.
 
     Also reports the wire peer it sees on that netdev, so the coordinator can
     cross-check that the two ends face each other before any open.
     """
-    report: dict = {"ok": False, "host": os.uname().nodename, "cable": cable}
+    report: dict = {"ok": False, "host": os.uname().nodename, "cable": cable,
+                    "function": function}
     try:
-        resolved = resolve_stream_device(cable)
+        resolved = resolve_stream_device(cable, function)
     except ResolveError as exc:
         report["error"] = str(exc)
         report["configfs_missing"] = exc.configfs
@@ -1011,7 +1035,8 @@ def run_probe(cable: str) -> int:
     return 0
 
 
-def run_peer(dev: str | None, cable: str) -> int:
+def run_peer(dev: str | None, cable: str,
+             function: str = DEFAULT_FUNCTION) -> int:
     """The mirror side. Its own alarms, its own one-open rule, its own JSON.
 
     The cable arrives in argv. When the coordinator also passed the device it
@@ -1021,10 +1046,10 @@ def run_peer(dev: str | None, cable: str) -> int:
     """
     signal.signal(signal.SIGALRM, _alarm)
     report = {"role": "peer", "outcome": "ok", "open_count": 0, "dev": dev,
-              "cable": cable}
+              "cable": cable, "function": function}
     fd = None
     try:
-        resolved = resolve_stream_device(cable)
+        resolved = resolve_stream_device(cable, function)
         report["ring_size"] = resolved["ring_size"]
         report["throttling"] = resolved["throttling"]
         report["in_hopid"] = resolved["in_hopid"]
@@ -1056,7 +1081,8 @@ def run_peer(dev: str | None, cable: str) -> int:
     return 0
 
 
-def launch_peer(source: bytes, dev: str, cable: str) -> subprocess.Popen:
+def launch_peer(source: bytes, dev: str, cable: str,
+                function: str = DEFAULT_FUNCTION) -> subprocess.Popen:
     """Stream THIS FILE to the worker's python on stdin. Never a copy.
 
     ``--cable`` rides in ARGV alongside ``--dev`` for the same reason it does
@@ -1064,6 +1090,7 @@ def launch_peer(source: bytes, dev: str, cable: str) -> subprocess.Popen:
     the mismatched open. The peer re-resolves and refuses if the two disagree.
     """
     command = (f"python3 - --role peer --cable {shlex.quote(cable)} "
+               f"--function {shlex.quote(function)} "
                f"--dev {shlex.quote(dev)}")
     proc = subprocess.Popen(_ssh_argv(command), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -1109,7 +1136,8 @@ class Skip(Exception):
         self.base = base
 
 
-def coordinator_preconditions(source: bytes, cable: str) -> tuple:
+def coordinator_preconditions(source: bytes, cable: str,
+                              function: str = DEFAULT_FUNCTION) -> tuple:
     """Everything that must hold BEFORE a device is opened, and nothing else.
 
     Returns (local_resolution, peer_probe, base). Raises ``Skip`` carrying the
@@ -1128,20 +1156,20 @@ def coordinator_preconditions(source: bytes, cable: str) -> tuple:
     # "the shared cable" is decided by serve_blocks_run, on hardware.
     serve_up = serve_is_up()
     base["serve_up"] = serve_up
-    if serve_up and serve_blocks_run(cable, base):
+    if serve_up and serve_blocks_run(cable, base, function):
         raise Skip(SKIP_SERVE_UP, base)
 
     # (d)(ii) The peer on the CHOSEN cable must answer before we consider a
     # device at all.
     try:
-        local = resolve_stream_device(cable)
+        local = resolve_stream_device(cable, function)
     except ResolveError as exc:
         # The chain can fail before the peer is even addressable (no netdev
         # for this cable) or at the configfs group. Both are typed skips, in
         # the order the lane specifies.
         base["local_resolve_error"] = str(exc)
         if exc.configfs:
-            base["peer_probe"] = probe_peer(source, cable)
+            base["peer_probe"] = probe_peer(source, cable, function)
             raise Skip(SKIP_CONFIGFS_MISSING, base)
         raise Skip(SKIP_PEER_UNREACHABLE, base)
 
@@ -1157,7 +1185,7 @@ def coordinator_preconditions(source: bytes, cable: str) -> tuple:
     # end is proven by resolve_stream_device having returned; the worker's is
     # proven by the read-only probe over the control wire, on the SAME cable
     # because the label went out in argv.
-    probe = probe_peer(source, cable)
+    probe = probe_peer(source, cable, function)
     base["device"]["coordinator"] = local["dev"]
     base["configfs"] = {"coordinator": local["configfs_group"]}
     base["ring_size"] = local["ring_size"]
@@ -1186,7 +1214,8 @@ def coordinator_preconditions(source: bytes, cable: str) -> tuple:
     return local, probe, base
 
 
-def run_dry_run(source: bytes, cable: str) -> int:
+def run_dry_run(source: bytes, cable: str,
+                function: str = DEFAULT_FUNCTION) -> int:
     """Rehearse the whole precondition chain. Opens nothing, writes nothing.
 
     Deliberately does NOT write a receipt on any path, including the skip
@@ -1199,7 +1228,7 @@ def run_dry_run(source: bytes, cable: str) -> int:
                "receipt_exists": already_banked(),
                "receipt_path": str(RECEIPT_PATH)}
     try:
-        local, probe, base = coordinator_preconditions(source, cable)
+        local, probe, base = coordinator_preconditions(source, cable, function)
     except Skip as skip:
         verdict["decision"] = "would-skip"
         verdict["outcome"] = skip.outcome
@@ -1219,7 +1248,8 @@ def run_dry_run(source: bytes, cable: str) -> int:
     return 0
 
 
-def run_coordinator(source: bytes, cable: str = DEFAULT_CABLE) -> int:
+def run_coordinator(source: bytes, cable: str = DEFAULT_CABLE,
+                    function: str = DEFAULT_FUNCTION) -> int:
     # (c) IDEMPOTENCE GUARD — before anything else, device or otherwise.
     if already_banked():
         print(f"usb4stream-bench: {RECEIPT_PATH} already exists; "
@@ -1227,7 +1257,7 @@ def run_coordinator(source: bytes, cable: str = DEFAULT_CABLE) -> int:
         return 0
 
     try:
-        local, probe, base = coordinator_preconditions(source, cable)
+        local, probe, base = coordinator_preconditions(source, cable, function)
     except Skip as skip:
         write_receipt(skip.outcome, skip.base)
         return 0
@@ -1238,7 +1268,7 @@ def run_coordinator(source: bytes, cable: str = DEFAULT_CABLE) -> int:
     fd = None
     started = time.perf_counter()
     try:
-        proc = launch_peer(source, probe["dev"], cable)
+        proc = launch_peer(source, probe["dev"], cable, function)
         set_phase("open")
         fd = open_stream_once(local["dev"])
         base["open_count"]["coordinator"] = open_count()
@@ -1299,19 +1329,28 @@ def main(argv: list | None = None) -> int:
                              "carriered Thunderbolt netdev. The label is "
                              "passed to the peer in argv so both ends resolve "
                              "the same cable.")
+    parser.add_argument("--function", choices=FUNCTIONS,
+                        default=DEFAULT_FUNCTION,
+                        help="which stream function group inside the "
+                             "service to resolve. Both twins provision fn0 "
+                             "and fn1 on every cable, as independent pairs "
+                             "with their own hopids; a function whose hopid "
+                             "collides with thunderbolt_net's on the same "
+                             "router must not be opened. Passed to the peer "
+                             "in argv so both ends resolve the same one.")
     parser.add_argument("--dry-run", action="store_true",
                         help="coordinator only: run every precondition, print "
                              "the decision, open nothing and write no receipt.")
     args = parser.parse_args(argv)
 
     if args.role == "probe":
-        return run_probe(args.cable)
+        return run_probe(args.cable, args.function)
     if args.role == "peer":
-        return run_peer(args.dev, args.cable)
+        return run_peer(args.dev, args.cable, args.function)
     source = pathlib.Path(__file__).read_bytes()
     if args.dry_run:
-        return run_dry_run(source, args.cable)
-    return run_coordinator(source, args.cable)
+        return run_dry_run(source, args.cable, args.function)
+    return run_coordinator(source, args.cable, args.function)
 
 
 if __name__ == "__main__":

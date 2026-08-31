@@ -305,9 +305,13 @@ class CableSelection(unittest.TestCase):
     def test_cable_a_is_the_default_so_absent_flags_change_nothing(self):
         self.assertEqual(BENCH.DEFAULT_CABLE, BENCH.CABLE_A)
         self.assertEqual(BENCH.CABLES, ("A", "B"))
-        self.assertEqual(BENCH.run_coordinator.__defaults__, (BENCH.CABLE_A,))
+        self.assertEqual(BENCH.run_coordinator.__defaults__,
+                         (BENCH.CABLE_A, BENCH.DEFAULT_FUNCTION))
         self.assertEqual(BENCH.resolve_stream_device.__defaults__,
-                         (BENCH.CABLE_A,))
+                         (BENCH.CABLE_A, BENCH.DEFAULT_FUNCTION))
+        # fn0 stays the default: naming no --function changes nothing either.
+        self.assertEqual(BENCH.DEFAULT_FUNCTION, "fn0")
+        self.assertEqual(BENCH.FUNCTIONS, ("fn0", "fn1"))
 
     def test_the_flag_parses_and_defaults_to_a(self):
         import argparse
@@ -478,7 +482,7 @@ class ServePreconditionIsCableAware(unittest.TestCase):
                                                 BENCH.rail_netdev,
                                                 BENCH.router_identity)
         try:
-            BENCH.resolve_stream_device = lambda c: {"domain": "domain1",
+            BENCH.resolve_stream_device = lambda c, f=BENCH.DEFAULT_FUNCTION: {"domain": "domain1",
                                                      "nhi": "0000:c5:00.6"}
             BENCH.rail_netdev = lambda: ("tbnet", "10.99.0.1")
             BENCH.router_identity = lambda p: ("domain1", "0000:c5:00.6")
@@ -494,7 +498,7 @@ class ServePreconditionIsCableAware(unittest.TestCase):
                                                 BENCH.rail_netdev,
                                                 BENCH.router_identity)
         try:
-            BENCH.resolve_stream_device = lambda c: {"domain": "domain0",
+            BENCH.resolve_stream_device = lambda c, f=BENCH.DEFAULT_FUNCTION: {"domain": "domain0",
                                                      "nhi": "0000:c5:00.5"}
             BENCH.rail_netdev = lambda: ("tbnet", "10.99.0.1")
             BENCH.router_identity = lambda p: ("domain1", "0000:c5:00.6")
@@ -510,7 +514,7 @@ class ServePreconditionIsCableAware(unittest.TestCase):
                                                 BENCH.rail_netdev,
                                                 BENCH.router_identity)
         try:
-            BENCH.resolve_stream_device = lambda c: {"domain": None, "nhi": None}
+            BENCH.resolve_stream_device = lambda c, f=BENCH.DEFAULT_FUNCTION: {"domain": None, "nhi": None}
             BENCH.rail_netdev = lambda: ("tbnet", "10.99.0.1")
             BENCH.router_identity = lambda p: (None, None)
             base = {}
