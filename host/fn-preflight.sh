@@ -45,9 +45,14 @@ ENV_FILTER='^(FN_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_
 # coordinator-decided transport.
 REMOTE_TMP="$(worker 'mktemp -d')"
 worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
+# Separate `export` statements, NOT prefix assignments on `source`: bash
+# applies a prefix assignment only for the duration of the builtin and
+# RESTORES the prior (unset) state when it returns, undoing the export
+# fn-env.sh performs inside. The worker then carried neither variable and
+# the byte-diff failed on exactly these two lines.
 worker "( set -a; \
-    NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME' \
-    FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG' \
+    export NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME'; \
+    export FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG'; \
     source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
   | grep -E '$ENV_FILTER' | LC_ALL=C sort" > "$TMP/env.worker"
 

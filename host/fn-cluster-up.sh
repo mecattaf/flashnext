@@ -189,8 +189,8 @@ REMOTE_TMP="$(worker 'mktemp -d')"
 worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
 worker "mkdir -p '$FN_STATE_DIR' \
   && ( set -a; \
-       NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME' \
-       FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG' \
+       export NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME'; \
+       export FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG'; \
        source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
      | grep -E '$ENV_FILTER' | LC_ALL=C sort > '$REMOTE_TMP/env.list'"
 
