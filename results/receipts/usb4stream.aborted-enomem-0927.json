@@ -1,0 +1,72 @@
+{
+ "step": "usb4stream",
+ "status": "pass",
+ "ts": "2026-08-31T09:27:35",
+ "data": {
+  "serve_up": false,
+  "loop": "python",
+  "cable": "B",
+  "schedule": {
+   "warmup_iters": 50,
+   "warmup_bytes": 4096,
+   "rtt_sizes": [
+    64,
+    4096,
+    16384,
+    65536
+   ],
+   "rtt_iters": 500,
+   "exchange_sizes": [
+    8192,
+    16384,
+    65536
+   ],
+   "exchange_iters": 500,
+   "throughput_bytes_each_direction": 268435456
+  },
+  "device": {
+   "coordinator": "/dev/tbstream0",
+   "peer": "/dev/tbstream0"
+  },
+  "open_count": {
+   "coordinator": 0,
+   "peer": 0
+  },
+  "rail": {
+   "dev": "thunderbolt1",
+   "addr": "169.254.17.133",
+   "peer": "169.254.53.173",
+   "cable": "B"
+  },
+  "peer_reachable": {
+   "netdev": "thunderbolt1",
+   "peer": "169.254.53.173",
+   "reachable": true,
+   "ping": true,
+   "neigh_lladdr": "02:4e:e0:7d:e4:e9",
+   "neigh_state": "REACHABLE"
+  },
+  "configfs": {
+   "coordinator": "/sys/kernel/config/thunderbolt/stream/0-2.1/fn0",
+   "peer": "/sys/kernel/config/thunderbolt/stream/1-2.1/fn0"
+  },
+  "ring_size": "1024",
+  "throttling": "2048",
+  "hopids": {
+   "coordinator": {
+    "in": "9",
+    "out": "8"
+   },
+   "peer": {
+    "in": "8",
+    "out": "9"
+   }
+  },
+  "peer_ring_size": "1024",
+  "peer_throttling": "2048",
+  "error": "OSError: [Errno 12] Cannot allocate memory: '/dev/tbstream0'",
+  "wall_s": 0.001,
+  "peer_report": {},
+  "outcome": "aborted:open:ENOMEM"
+ }
+}

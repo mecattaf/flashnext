@@ -35,19 +35,31 @@ record() { printf '%s\t%s\n' "$1" "$2" >> "$REPORT"; }
 worker() { ssh "$FN_WORKER_HOST" "$@"; }
 
 # --- 1. byte-diff of both ranks' exported doctrine env ------------------------
-ENV_FILTER='^(FN_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
+# GLOO_ joins the graded prefixes: GLOO_SOCKET_IFNAME is an interface NAME,
+# identical on both nodes by construction, so it byte-diffs clean — and a
+# future edit that made it host-conditional is exactly the divergence this
+# gate exists to catch (one rank listening where the other never dials).
+# It must also match fn-cluster-up.sh's copy of this filter, which is what
+# builds podman's --env-file; the two strings are independent literals.
+ENV_FILTER='^(FN_|GLOO_|NCCL_|RAY_|TORCH_NCCL_|VLLM_|PYTHONHASHSEED=|HSA_|PYTORCH_HIP_|TORCHINDUCTOR_|TRITON_|HF_)'
 ( set -a; source "$SCRIPT_DIR/fn-env.sh" >/dev/null; env ) \
   | grep -E "$ENV_FILTER" | LC_ALL=C sort > "$TMP/env.coordinator"
 
-# The transport decision is made ONCE on the coordinator and injected into
+# The transport decisions are made ONCE on the coordinator and injected into
 # the worker's sourcing as pre-set literals (mirrors fn-cluster-up.sh): the
 # byte-diff then verifies everything else AND that both ranks agree on the
-# coordinator-decided transport.
+# coordinator-decided transport, data plane and control plane alike.
 REMOTE_TMP="$(worker 'mktemp -d')"
 worker "cat > '$REMOTE_TMP/fn-env.sh'" < "$SCRIPT_DIR/fn-env.sh"
+# Separate `export` statements, NOT prefix assignments on `source`: bash
+# applies a prefix assignment only for the duration of the builtin and
+# RESTORES the prior (unset) state when it returns, undoing the export
+# fn-env.sh performs inside. The worker then carried none of these variables
+# and the byte-diff failed on exactly the injected lines.
 worker "( set -a; \
-    NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME' \
-    FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG' \
+    export NCCL_SOCKET_IFNAME='$NCCL_SOCKET_IFNAME'; \
+    export GLOO_SOCKET_IFNAME='$GLOO_SOCKET_IFNAME'; \
+    export FN_TRANSPORT_RUNG='$FN_TRANSPORT_RUNG'; \
     source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
   | grep -E '$ENV_FILTER' | LC_ALL=C sort" > "$TMP/env.worker"
 
@@ -92,7 +104,9 @@ check_hold worker "$(worker "$(declare -f latency_hold_probe); latency_hold_prob
 # --- 3. per-rail link-speed record, both nodes ---------------------------------
 rail_speeds() {  # emits "<rail> <speed-Mb/s>|absent" lines for the two rails
   local rail
-  for rail in thunderbolt0 thunderbolt1; do
+  # rail0/rail2 are cable-bound names since dotfiles#266; thunderbolt0/1 no
+  # longer exist on either twin.
+  for rail in rail0 rail2; do
     if [ -r "/sys/class/net/$rail/speed" ]; then
       printf '%s %s\n' "$rail" "$(cat "/sys/class/net/$rail/speed" 2>/dev/null || echo down)"
     else
@@ -135,7 +149,7 @@ rtt_probe_node() {  # $@ = interfaces to probe
   done
 }
 is_listed() { case ",$NCCL_SOCKET_IFNAME," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
-PROBE_IFACES="thunderbolt0 thunderbolt1"
+PROBE_IFACES="rail0 rail2"
 if is_listed enp191s0; then
   PROBE_IFACES="$PROBE_IFACES enp191s0"
 fi
@@ -197,7 +211,7 @@ for n in ("coordinator", "worker"):
     hold[n] = {"unit": u, "cpu_dma_latency": v}
 rails = {}
 for node in ("coordinator", "worker"):
-    for rail in ("thunderbolt0", "thunderbolt1", "enp191s0"):
+    for rail in ("rail0", "rail2", "enp191s0"):
         if f"rtt_us_{node}_{rail}" in kv or f"speed_{node}_{rail}" in kv:
             rails.setdefault(rail, {})[node] = {
                 "speed_mbps": kv.get(f"speed_{node}_{rail}"),

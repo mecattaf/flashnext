@@ -177,6 +177,68 @@ bench resolves the node on each side (rail netdev holding the 10.99.0.0/30 →
 `key == stream` → that group's `index`) and requires **both** ends' `fn0`
 groups to exist before any open.
 
+## 5a. AMENDMENT 2026-08-31 — the first real run goes on cable B
+
+§5 above says the bench rides **cable A**, the serving cable, and calls cable
+B *peerless* (a cable "whose counterpart has no configfs groups at all"). Both
+statements are superseded. Recorded here rather than edited away, because the
+reasoning in §5 stays correct — it is the premises that were wrong.
+
+**The peerless claim is refuted.** Verified twice on 2026-08-30 by independent
+inspection of both nodes: cable B is a fully peered, provisioned stream pair.
+Its `fn0` configfs groups exist on both boxes (`ring_size=1024`,
+`throttling=2048`, like cable A's), its hopids interlock — coordinator out 8 →
+worker in 8, worker out 9 → coordinator in 9 — and its two netdevs ping each
+other clean at 0.12 ms. There is no peerless cable on these twins. §3.2's
+separate rejection of cable B was about a zero-copy RX train this project does
+not carry, and does not bear on the bench.
+
+**Operator ruling: the bench targets cable B.** The hazard §5 describes is
+real and unchanged — first open enables router paths, last close disables
+them, and cycling that against a mismatched peer corrupts hop tables and needs
+a reboot. The ruling is about *what a wedge costs*. A wedge on cable A takes
+down `thunderbolt0`, the rail TP=2 depends on. A wedge on cable B costs a
+parked spare carrying nothing but link-local. Same hazard, an order of
+magnitude less blast radius, and the two cables land on **different PCI
+functions and therefore different Thunderbolt domains** on both nodes, so a
+cable-B wedge cannot reach the serving rail's hop tables at all. The bench
+verifies that disjointness at runtime rather than trusting this paragraph.
+
+**What changed in `bench/usb4stream-bench.py`:**
+
+- `--cable {A,B}`, **default A**, so absent the flag every behaviour is
+  bit-identical to what §5 describes. Cable A is still the netdev holding the
+  10.99.0.0/30 address; cable B is the *other* carriered Thunderbolt netdev on
+  that node. Still no netdev name, service basename or device index anywhere:
+  the basenames **cross** between the twins (`0-2.1` is cable B on the
+  coordinator and cable A on the worker), so any global constant would select
+  different cables on the two boxes.
+- The cable travels to the worker **in argv**, on both the probe and the peer
+  launch. Nothing else crosses `ssh`, and a one-sided switch is precisely the
+  cross-cable mismatched open the whole file exists to prevent.
+- A **mismatch guard** runs before any open: the two ends must agree on the
+  cable label, the hopid interlock must close, and each end's netdev must be
+  the other's wire peer. Disagreement is a typed skip
+  (`skipped:cable-mismatch-between-nodes`) with nothing opened. The device
+  index is deliberately *not* compared — it is coincidentally equal on both
+  nodes for a given cable and so proves nothing.
+- The peer-reachability precondition no longer derives the peer by swapping
+  the last octet of a /30. That swap is meaningless off the /30 (cable B's
+  `169.254.17.133` swaps to `169.254.17.1`, nobody), so the check had silently
+  become a no-op. It is now a neighbour-reachability test on the chosen
+  interface that cannot be satisfied by this node itself.
+- The serve precondition is **cable-aware**. Its rationale is shared hardware,
+  not the existence of a serve: cable A is blocked unconditionally, exactly as
+  before, while a cable-B run is blocked only if its stream router and NHI
+  cannot be shown disjoint from the serving rail's. Anything unmeasurable is
+  treated as shared.
+- `--dry-run` rehearses the entire precondition chain, prints the decision,
+  and writes **no receipt**. Run it first: a spurious `skipped:` receipt would
+  arm the idempotence guard against every future run.
+
+Read the resolved paths, hopids and cable label out of the receipt
+(`data.cable`, `data.device`, `data.hopids`), never a remembered number.
+
 ## 6. Drafted, NOT filed — issue body for the port
 
 > **Title:** Port the doorbell + progress-thread allreduce from verbs onto the

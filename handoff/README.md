@@ -1,3 +1,7 @@
+> **Not the entry point any more.** Start at **`handoff/START-HERE.md`** — the resume
+> document for returning to flashnext after the NixOS work (dotfiles#271). This file is the
+> catalog-row handoff, which is complete apart from Step 0 below, and is kept as the record.
+
 # Morning handoff — the fleet catalog row
 
 > ## ⚠ CORRECTED 2026-08-31 — READ BEFORE ACTING ON THIS DOCUMENT
@@ -25,6 +29,33 @@ One file to apply, one review, one rebuild. `catalog-row.patch` is a
 `git format-patch` against **mecattaf/dotfiles**, generated overnight against
 `99d72cf5` and never applied by this campaign. Applying it is a morning
 operator act (spec ruling P13, claim 7.3); this repository only prepared it.
+
+---
+
+## Status, re-checked 2026-08-31 — read this before you `git am`
+
+**The row is already in `mecattaf/dotfiles`.** It landed on 2026-08-30 19:02 as
+`161fafb5` (PR #265, carrying #260 "models: a catalog row for the FP8 TP=2
+checkpoint"), and dotfiles HEAD has since moved to `5d47acde`. Consequently
+`git apply --check` of this patch against that tree now reports
+`modules/strix.nix: patch does not apply` — because the change is **present**,
+not because it is wrong. The `lib/local-models.nix` row is present too.
+
+**It is deployed, and it worked.** On the coordinator,
+`/etc/local-models/wanted.json` names `flashnext-fp8`, both projections exist
+under `/etc/local-models/{artifacts,snapshots}/`, and the staged copy survived
+the several rebuilds the SSD transition performed — 141 files,
+185,563,713,216 bytes, 131 shards, still there. That is the anti-prune holding.
+
+**One step is still open: the Library rename (Step 0 below).** The NAS still
+carries `/mnt/nas/models/weights/qwen38-flash-next-fp8`, and no
+`flashnext-fp8` directory exists beside it. `library-fetch` addresses the
+Library as `weights/<artifactId>/`, so until that `mv` happens the 02:30 timer
+can reach for ~173 GiB the NAS already holds.
+
+So the morning act is no longer *apply*: it is **Step 0, then the
+verification block at the end of this file.** Everything between them is kept
+as the record of what was applied and why.
 
 ---
 
@@ -95,7 +126,13 @@ twins are entitled to keep.
 
 Read from the Library copy at
 `/mnt/nas/models/weights/qwen38-flash-next-fp8`, because node-side staging had
-not re-run when this was written. `bytes` from `stat`. `oid` from the
+not re-run when this was written. **Re-verified 2026-08-31 against the
+completed staged copy at `/var/lib/local-models/flashnext-fp8`**, which is the
+source of truth the spec names: 141 files on both sides with an empty set
+difference either way, zero per-file `bytes` mismatches, totals agreeing at
+185,563,713,216, all 141 `hash` fields the correct SRI of their own `oid`, and
+`sha256sum` recomputed on the ten non-LFS files plus shards 00001 and 00131 —
+twelve for twelve against the declared digests. Nothing needed correcting. `bytes` from `stat`. `oid` from the
 `huggingface_hub` download metadata under `.cache/huggingface/download/` — for
 LFS files the etag *is* the content sha256, which was confirmed by recomputing
 `sha256sum` on eleven shards spread across the set (00001, 00013, 00027, 00041,
@@ -107,7 +144,8 @@ sha256 was computed directly. `hash` is the base64 SRI of the same digest.
 
 ## Apply it
 
-**Step 0 — rename the Library directory, on the NAS, first.**
+**Step 0 — rename the Library directory, on the NAS, first.** *(Still
+outstanding as of 2026-08-31 — this is the one action left.)*
 
 ```
 mv /mnt/nas/models/weights/qwen38-flash-next-fp8 \
@@ -127,6 +165,11 @@ re-downloads 173 GiB it already has.
 cd ~/mecattaf/dotfiles
 git am /path/to/catalog-row.patch      # or: git apply
 ```
+
+*If this reports `patch does not apply`, stop and check `git log -S
+flashnext-fp8 -- lib/local-models.nix modules/strix.nix` before forcing
+anything: as of 2026-08-31 the row is already committed at `161fafb5`, so the
+expected outcome is a refusal, and the review below is what you do instead.*
 
 Three things to check, and they are the only three that matter:
 

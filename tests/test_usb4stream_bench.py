@@ -259,5 +259,293 @@ class ReceiptsBound(unittest.TestCase):
         self.assertIsNotNone(self.check({"outcome": "fine", "serve_up": False}))
 
 
+# ---------------------------------------------------------------------------
+# The cable selection, added when the bench was pointed at cable B.
+#
+# The bench was written against ONE cable — the tensor rail — and every part
+# of the resolution chain was anchored to it: the netdev was found by its
+# RAIL_NET address, the peer was derived by swapping the last octet of a /30,
+# and the cable never travelled to the worker because there was nothing to
+# say. Pointing it at the spare cable breaks all three assumptions at once,
+# and getting any of them wrong opens two ends against DIFFERENT cables —
+# the mismatched open that corrupts router hop tables. These are the
+# invariants that make that unreachable.
+# ---------------------------------------------------------------------------
+
+def _resolution(cable, netdev, addr, peer, in_hopid, out_hopid, index,
+                service, domain, nhi, **extra):
+    """A synthetic resolve_stream_device() result, as either node would see it."""
+    data = {
+        "ok": True, "cable": cable, "rail": netdev, "rail_addr": addr,
+        "peer_addr": peer, "in_hopid": in_hopid, "out_hopid": out_hopid,
+        "index": index, "dev": "/dev/" + DEVICE_WORD + str(index),
+        "configfs_group": service, "domain": domain, "nhi": nhi,
+        "ring_size": "1024", "throttling": "2048",
+    }
+    data.update(extra)
+    return data
+
+
+# The four resolutions actually observed on the twins on 2026-08-30, which is
+# what makes the cross-cable cases below real rather than imagined. Note two
+# facts the guard is built around: the device INDEX is equal on both nodes for
+# a given cable (so index agreement proves nothing), and the configfs service
+# basenames CROSS between the nodes (so basename agreement would be wrong).
+COORD_A = _resolution("A", "thunderbolt0", "10.99.0.1", "10.99.0.2",
+                      "9", "9", 2, "1-2.1", "domain1", "0000:c5:00.6")
+WORKER_A = _resolution("A", "thunderbolt0", "10.99.0.2", "10.99.0.1",
+                       "9", "9", 2, "0-2.1", "domain0", "0000:c4:00.5")
+COORD_B = _resolution("B", "thunderbolt1", "169.254.17.133", "169.254.53.173",
+                      "9", "8", 0, "0-2.1", "domain0", "0000:c5:00.5")
+WORKER_B = _resolution("B", "thunderbolt1", "169.254.53.173", "169.254.17.133",
+                       "8", "9", 0, "1-2.1", "domain1", "0000:c4:00.6")
+
+
+class CableSelection(unittest.TestCase):
+    def test_cable_a_is_the_default_so_absent_flags_change_nothing(self):
+        self.assertEqual(BENCH.DEFAULT_CABLE, BENCH.CABLE_A)
+        self.assertEqual(BENCH.CABLES, ("A", "B"))
+        self.assertEqual(BENCH.run_coordinator.__defaults__,
+                         (BENCH.CABLE_A, BENCH.DEFAULT_FUNCTION))
+        self.assertEqual(BENCH.resolve_stream_device.__defaults__,
+                         (BENCH.CABLE_A, BENCH.DEFAULT_FUNCTION))
+        # fn0 stays the default: naming no --function changes nothing either.
+        self.assertEqual(BENCH.DEFAULT_FUNCTION, "fn0")
+        self.assertEqual(BENCH.FUNCTIONS, ("fn0", "fn1"))
+
+    def test_the_flag_parses_and_defaults_to_a(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--cable", choices=BENCH.CABLES,
+                            default=BENCH.DEFAULT_CABLE)
+        self.assertEqual(parser.parse_args([]).cable, "A")
+        self.assertEqual(parser.parse_args(["--cable", "B"]).cable, "B")
+
+    def test_no_netdev_name_service_basename_or_index_is_hardcoded(self):
+        """The rule must be a rule. Any literal here selects the WRONG cable on
+        one of the two boxes, because the basenames cross between them."""
+        src = BENCH_PATH.read_text()
+        rule = src.split("def cable_netdev", 1)[1].split("\ndef ", 1)[0]
+        # The prose may quote the observed basenames to explain WHY they must
+        # not be used; the executable rule may not contain them.
+        rule = rule.split('"""', 2)[-1]
+        for banned in ("thunderbolt0", "thunderbolt1", "0-2.1", "1-2.1"):
+            self.assertNotIn(banned, rule,
+                             f"cable_netdev names {banned!r}; selection must "
+                             "be derived per node, not named")
+
+    def test_cable_selection_travels_in_argv_to_both_remote_roles(self):
+        """An env var does not survive ssh. A one-sided switch is the wedge."""
+        recorded = {}
+
+        class _Fake:
+            stdin = None
+            def __init__(self, *a, **k):
+                pass
+
+        def fake_run(argv, **kwargs):
+            recorded["probe"] = argv[-1]
+            class R:
+                stdout = b'{"ok": false}'
+                stderr = b""
+                returncode = 0
+            return R()
+
+        class FakePopen:
+            def __init__(self, argv, **kwargs):
+                recorded["peer"] = argv[-1]
+                import io
+                self.stdin = io.BytesIO()
+
+        real_run, real_popen = BENCH.subprocess.run, BENCH.subprocess.Popen
+        try:
+            BENCH.subprocess.run = fake_run
+            BENCH.subprocess.Popen = FakePopen
+            BENCH.probe_peer(b"src", "B")
+            BENCH.launch_peer(b"src", "/dev/" + DEVICE_WORD + "0", "B")
+        finally:
+            BENCH.subprocess.run, BENCH.subprocess.Popen = real_run, real_popen
+
+        self.assertIn("--role probe", recorded["probe"])
+        self.assertIn("--cable B", recorded["probe"])
+        self.assertIn("--role peer", recorded["peer"])
+        self.assertIn("--cable B", recorded["peer"])
+
+
+class PeerReachability(unittest.TestCase):
+    """The old check derived the peer by swapping the last octet of a /30.
+
+    Off the /30 that is not a peer derivation, it is arithmetic — and a check
+    that can be satisfied without a second machine is not a safety check.
+    """
+
+    def test_the_octet_swap_is_meaningless_off_the_rail_net(self):
+        swapped = BENCH.rail_peer_address("169.254.17.133")
+        self.assertEqual(swapped, "169.254.17.1")
+        self.assertNotEqual(swapped, "169.254.53.173",
+                            "the swap does not name the cable-B peer")
+
+    def test_an_address_this_node_holds_can_never_satisfy_the_check(self):
+        real = BENCH.local_addresses
+        try:
+            BENCH.local_addresses = lambda: {"169.254.17.133"}
+            report = BENCH.peer_reachable("tbnet", "169.254.17.133", "aa:bb")
+        finally:
+            BENCH.local_addresses = real
+        self.assertFalse(report["reachable"])
+        self.assertIn("THIS node", report["error"])
+
+    def test_a_missing_peer_address_is_a_refusal_not_a_pass(self):
+        self.assertFalse(BENCH.peer_reachable("tbnet", None, "aa:bb")["reachable"])
+
+    def test_our_own_link_layer_address_is_not_a_peer(self):
+        real_local, real_neigh, real_run = (BENCH.local_addresses,
+                                            BENCH.neighbours, BENCH.subprocess.run)
+        try:
+            BENCH.local_addresses = lambda: set()
+            BENCH.neighbours = lambda dev: [("169.254.1.1", "aa:bb", "REACHABLE")]
+            BENCH.subprocess.run = lambda *a, **k: type("R", (), {"returncode": 0})()
+            report = BENCH.peer_reachable("tbnet", "169.254.1.1", "aa:bb")
+        finally:
+            (BENCH.local_addresses, BENCH.neighbours,
+             BENCH.subprocess.run) = real_local, real_neigh, real_run
+        self.assertFalse(report["reachable"])
+        self.assertIn("OWN link-layer", report["error"])
+
+
+class CableMismatchGuard(unittest.TestCase):
+    """Before any open, both ends must be proven to be on the SAME cable."""
+
+    def test_the_real_same_cable_pairings_agree(self):
+        self.assertIsNone(BENCH.cable_disagreement(COORD_A, WORKER_A))
+        self.assertIsNone(BENCH.cable_disagreement(COORD_B, WORKER_B))
+
+    def test_every_cross_cable_pairing_is_refused(self):
+        for local, peer in ((COORD_A, WORKER_B), (COORD_B, WORKER_A)):
+            self.assertIsNotNone(BENCH.cable_disagreement(local, peer))
+
+    def test_the_hopid_interlock_catches_a_cross_cable_pair_on_its_own(self):
+        """Witness 2 must not depend on the label: forge the labels to agree
+        and the router's own view of the path still refuses."""
+        for local, peer in ((COORD_A, WORKER_B), (COORD_B, WORKER_A)):
+            forged_local = dict(local, cable="X")
+            forged_peer = dict(peer, cable="X")
+            reason = BENCH.cable_disagreement(forged_local, forged_peer)
+            self.assertIsNotNone(reason)
+            self.assertIn("hopid interlock", reason)
+
+    def test_the_index_is_never_what_agreement_rests_on(self):
+        """Both nodes report the SAME index for a given cable, so an index
+        comparison would wave a cross-cable pairing through."""
+        self.assertEqual(COORD_A["index"], WORKER_A["index"])
+        self.assertEqual(COORD_B["index"], WORKER_B["index"])
+        crossed = BENCH.cable_disagreement(dict(COORD_B, cable="X"),
+                                           dict(WORKER_A, cable="X",
+                                                index=COORD_B["index"]))
+        self.assertIsNotNone(crossed,
+                             "equal indices must not make a cross-cable pair agree")
+
+    def test_the_service_basenames_cross_and_are_not_compared(self):
+        self.assertEqual(COORD_A["configfs_group"], WORKER_B["configfs_group"])
+        self.assertEqual(COORD_B["configfs_group"], WORKER_A["configfs_group"])
+        self.assertIsNone(BENCH.cable_disagreement(COORD_A, WORKER_A),
+                          "differing basenames on the same cable must still agree")
+
+    def test_wire_peers_that_do_not_face_each_other_are_refused(self):
+        reason = BENCH.cable_disagreement(
+            COORD_B, dict(WORKER_B, rail_addr="169.254.99.99"))
+        self.assertIsNotNone(reason)
+        self.assertIn("wire peer mismatch", reason)
+
+    def test_a_failed_peer_probe_is_a_refusal(self):
+        self.assertIsNotNone(BENCH.cable_disagreement(COORD_B, {"ok": False}))
+
+    def test_the_mismatch_skip_is_typed_and_passes_the_receipts_bound(self):
+        self.assertTrue(BENCH.SKIP_CABLE_MISMATCH.startswith("skipped:"))
+        self.assertIn(BENCH.SKIP_CABLE_MISMATCH, BENCH_PATH.read_text())
+        self.assertIsNone(VERIFY.BOUNDS["usb4stream"](
+            {"outcome": BENCH.SKIP_CABLE_MISMATCH, "serve_up": True}))
+
+
+class ServePreconditionIsCableAware(unittest.TestCase):
+    """The serve check exists because a wedge would take the serve down, not
+    because a serve exists. On cable A those coincide; on cable B they do not,
+    and the difference is decided on hardware rather than on a label."""
+
+    def test_cable_a_is_blocked_unconditionally_and_the_note_is_unchanged(self):
+        base = {}
+        self.assertTrue(BENCH.serve_blocks_run(BENCH.CABLE_A, base))
+        self.assertIn("shares cable A with the serving rails", base["note"])
+
+    def test_cable_b_is_blocked_when_it_shares_the_serving_router(self):
+        real_resolve, real_rail, real_router = (BENCH.resolve_stream_device,
+                                                BENCH.rail_netdev,
+                                                BENCH.router_identity)
+        try:
+            BENCH.resolve_stream_device = lambda c, f=BENCH.DEFAULT_FUNCTION: {"domain": "domain1",
+                                                     "nhi": "0000:c5:00.6"}
+            BENCH.rail_netdev = lambda: ("tbnet", "10.99.0.1")
+            BENCH.router_identity = lambda p: ("domain1", "0000:c5:00.6")
+            base = {}
+            self.assertTrue(BENCH.serve_blocks_run(BENCH.CABLE_B, base))
+            self.assertIn("shared", base["note"])
+        finally:
+            (BENCH.resolve_stream_device, BENCH.rail_netdev,
+             BENCH.router_identity) = real_resolve, real_rail, real_router
+
+    def test_cable_b_proceeds_only_on_a_demonstrably_disjoint_router(self):
+        real_resolve, real_rail, real_router = (BENCH.resolve_stream_device,
+                                                BENCH.rail_netdev,
+                                                BENCH.router_identity)
+        try:
+            BENCH.resolve_stream_device = lambda c, f=BENCH.DEFAULT_FUNCTION: {"domain": "domain0",
+                                                     "nhi": "0000:c5:00.5"}
+            BENCH.rail_netdev = lambda: ("tbnet", "10.99.0.1")
+            BENCH.router_identity = lambda p: ("domain1", "0000:c5:00.6")
+            base = {}
+            self.assertFalse(BENCH.serve_blocks_run(BENCH.CABLE_B, base))
+            self.assertFalse(base["serve_shares_bench_hardware"])
+        finally:
+            (BENCH.resolve_stream_device, BENCH.rail_netdev,
+             BENCH.router_identity) = real_resolve, real_rail, real_router
+
+    def test_unmeasurable_hardware_is_treated_as_shared(self):
+        real_resolve, real_rail, real_router = (BENCH.resolve_stream_device,
+                                                BENCH.rail_netdev,
+                                                BENCH.router_identity)
+        try:
+            BENCH.resolve_stream_device = lambda c, f=BENCH.DEFAULT_FUNCTION: {"domain": None, "nhi": None}
+            BENCH.rail_netdev = lambda: ("tbnet", "10.99.0.1")
+            BENCH.router_identity = lambda p: (None, None)
+            base = {}
+            self.assertTrue(BENCH.serve_blocks_run(BENCH.CABLE_B, base))
+        finally:
+            (BENCH.resolve_stream_device, BENCH.rail_netdev,
+             BENCH.router_identity) = real_resolve, real_rail, real_router
+
+
+class DryRunCannotArmTheIdempotenceGuard(unittest.TestCase):
+    """A spurious skip receipt is not a small problem: it arms the guard
+    against EVERY future run. --dry-run exists so the whole precondition chain
+    can be rehearsed with no way to bank one."""
+
+    def test_the_precondition_chain_opens_nothing(self):
+        import inspect
+        chain = inspect.getsource(BENCH.coordinator_preconditions)
+        for banned in ("open_stream_once", "os.open", "write_receipt"):
+            self.assertNotIn(banned, chain)
+
+    def test_the_dry_run_never_writes_a_receipt(self):
+        import inspect
+        dry = inspect.getsource(BENCH.run_dry_run)
+        for banned in ("write_receipt", "open_stream_once", "launch_peer"):
+            self.assertNotIn(banned, dry)
+
+    def test_skips_carry_their_evidence_so_the_receipt_is_readable(self):
+        skip = BENCH.Skip(BENCH.SKIP_CABLE_MISMATCH, {"serve_up": True})
+        self.assertEqual(skip.outcome, BENCH.SKIP_CABLE_MISMATCH)
+        self.assertEqual(skip.base, {"serve_up": True})
+
+
 if __name__ == "__main__":
     unittest.main()

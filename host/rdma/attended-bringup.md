@@ -9,11 +9,35 @@ document, not just the steps marked ⚠. Read it top to bottom before starting.
 Topology this checklist assumes (spec.md, final-qwen-report.md, and the
 fleet's own `flake.nix`/host configs, cross-checked directly):
 
+> **UPDATED 2026-08-31 — three facts in the table below changed under this
+> document. Do not execute it from memory.**
+>
+> 1. **The rails are `rail0` and `rail2`.** `thunderbolt0`/`thunderbolt1` no
+>    longer exist on either twin: dotfiles#266 pins each name to a physical
+>    cable via `.link Name=` on the NHI's PCI path, because the probe-order
+>    names flipped on both twins at the 2026-08-31 12:27 reboot and put rail
+>    0's `/30` on the wrong cable. Substitute `rail0` for `thunderbolt0`
+>    everywhere below, including in step 5.
+> 2. **The NHI functions in the table are the WORKER's**, presented as if they
+>    were fleet-wide — the same error dotfiles#267 fixed. Per host: cable A
+>    (rail0) is `c5:00.6` on the coordinator and `c4:00.5` on the worker;
+>    cable B (rail2) is `c5:00.5` / `c4:00.6`.
+> 3. **Rail 2 is no longer link-local.** It carries `10.99.2.1/2` on a `/30`
+>    (dotfiles#274) and has its own TCP door. It is still never touched by
+>    this checklist — RDMA stays rail 0 only — but "no static address" is now
+>    wrong, and a stale assumption there is how you would mis-read a bench.
+>
+> Also: `fetch-and-build.sh` now stages to `/var/lib/flashnext-rdma`, not
+> `$HOME/.local/state` (dotfiles#262). The loader reads that tree before any
+> non-root filesystem is mounted, so the old default was unreachable by
+> construction and a "successful" bake would still have left both twins on the
+> stock fallback.
+
 | interface | role | address | notes |
 |---|---|---|---|
-| `thunderbolt0` | rail 0 -- the ONLY rail RDMA is ever brought up on | `10.99.0.1` (coordinator) / `10.99.0.2` (worker), `/30` | USB4 `c4:00.5`, domain0. **Not** in either host's `networking.firewall.trustedInterfaces` (`hosts/coordinator/eth-fleet.nix:80`, `hosts/worker/default.nix:321` both list only `enp191s0`) -- step 5 opens it explicitly. |
-| `thunderbolt1` | rail 1 -- stays plain socket transport, always | link-local, no static address | USB4 `c4:00.6`, domain1 -- never touched by anything in this checklist |
-| `enp191s0` | control wire | `10.99.1.1` / `10.99.1.2`, `/30` | 5GbE, ssh/orchestration/staging, lower latency and jitter than either TB rail. **This is the wire everything in this checklist runs over** -- see step 1. |
+| `rail0` | rail 0 -- the ONLY rail RDMA is ever brought up on | `10.99.0.1` (coordinator) / `10.99.0.2` (worker), `/30` | Cable A: USB4 `c5:00.6`/domain1 on the coordinator, `c4:00.5`/domain0 on the worker. **Not** in either host's `networking.firewall.trustedInterfaces` (both list only `enp191s0`) -- but since dotfiles#266 the UDP 4791 door is declared on `rail0` in `modules/fn-rdma.nix`, so step 5's manual open should be a no-op; verify rather than assume. |
+| `rail2` | rail 2 -- stays plain socket transport, always | `10.99.2.1` / `10.99.2.2`, `/30` (dotfiles#274) | Cable B: USB4 `c5:00.5`/domain0 on the coordinator, `c4:00.6`/domain1 on the worker -- never touched by anything in this checklist |
+| `enp191s0` | control wire | `10.99.1.1` / `10.99.1.2`, `/30` | 5GbE, ssh/orchestration/staging. **This is the wire everything in this checklist runs over** -- see step 1. |
 
 The overnight transport of record is sockets on both rails. This checklist
 only ever changes rail 0. If anything here goes sideways, the rollback path

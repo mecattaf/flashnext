@@ -2,7 +2,11 @@
 # scripts/run-tp2.sh — flashnext first-light runner on the pair.
 #
 # Sequence (spec claims 4.2–4.5):
-#   preflight -> pair up -> two greedy 300-token completions byte-compared
+#   preflight -> pair up (which arbitrates the model-swap proxy on both twins
+#   and runs the eight fail-closed TP=2 parity assertions before the first
+#   launch, host/fn-swap-arbitrate.sh and host/fn-tp2-guards.py; both records
+#   are folded into the tp2 receipt below) -> two greedy 300-token completions
+#   byte-compared
 #   (tp2.json) -> residency read after 50 warmed decode tokens (residency.json,
 #   ruling P11) -> fidelity baseline: fixed-prompt losses and frontier logits
 #   under results/ (fidelity.json) -> the 262144-context probe (context.json).
@@ -88,6 +92,46 @@ try:
     data["preflight"] = pre["data"]
 except Exception as e:
     data["preflight"] = f"unreadable: {e}"
+
+# Fold the two pre-launch records the bring-up wrote under the state dir.
+#
+#   swap-arbitration.json — WAS THE MODEL-SWAP PROXY RUNNING WHEN WE ARRIVED?
+#   Without this line in the receipt the morning cannot tell a night that took
+#   the local roster down from a night that found it already down, and the
+#   restore in fn-cluster-down.sh looks like an unexplained restart.
+#
+#   tp2-guards.json — the eight parity assertions and the sharding checks,
+#   with the per-rank shard digests and the residency PREDICTED from the
+#   checkpoint header before the load. The prediction sitting beside the
+#   measured residency receipt is what turns the next OOM into arithmetic.
+#
+# Volatile fields are dropped: `restored` is written later, by the teardown,
+# and folding it here would make an otherwise identical re-run's receipt
+# differ (checkpoint purity, receipt-restore.py's contract).
+STATE_DIR = os.environ.get("FN_STATE_DIR", "")
+
+def fold_state(name, drop=()):
+    try:
+        with open(os.path.join(STATE_DIR, name)) as fh:
+            doc = json.load(fh)
+    except Exception as e:
+        return f"unreadable: {e}"
+    if isinstance(doc, dict):
+        return {k: ({kk: vv for kk, vv in v.items() if kk not in drop}
+                    if isinstance(v, dict) else v)
+                for k, v in doc.items() if k not in drop}
+    return doc
+
+data["swap_proxy"] = fold_state("swap-arbitration.json", drop=("restored", "ts"))
+guards = fold_state("tp2-guards.json")
+if isinstance(guards, dict):
+    data["tp2_guards"] = {
+        "status": guards.get("status"),
+        "summary": guards.get("summary"),
+        "assertions": {a["id"]: a["ok"] for a in guards.get("assertions", [])},
+    }
+else:
+    data["tp2_guards"] = guards
 
 base = RECEIPTS if status == "pass" else os.path.join(RECEIPTS, "failed")
 os.makedirs(base, exist_ok=True)

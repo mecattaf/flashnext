@@ -1,0 +1,1167 @@
+From a05fa983fb4699dc1dc704776e3fed014c215cc7 Mon Sep 17 00:00:00 2001
+From: mecattaf <thomas@mecattaf.dev>
+Date: Mon, 31 Aug 2026 02:07:09 +0200
+Subject: [PATCH 13/13] [ROCm] Survive the 7.14 overlapping host-registration
+ trap on the PLE path
+
+Measured on this stack, not inherited: ds4's rocm_host_copy_probe was run
+inside flashnext:dev on 2026-08-31 and passes ONLY in
+--expect-overlap-rejected mode (RUN3-BRIEF 16.1). Reproduced again in
+process while writing this commit: registering two page-overlapping spans
+of one mapping returns 712 (hipErrorHostMemoryAlreadyRegistered), and a
+plain hipMemcpy(H2D) out of the rejected pointer then fails with
+"CUDA error: invalid argument" / hipErrorInvalidValue.
+
+Both halves matter and the second is the one that is easy to miss:
+detecting the registration error is not sufficient, because the ordinary
+copy is poisoned too. The registration is PAGE-ROUNDED -- base down,
+length up -- so two logically DISJOINT slices of one mmap collide as soon
+as their rounded spans share a page. With a ~51.2 GB engram table sliced
+into non-page-aligned spans that is the common case, not an edge case
+(15.1). It shows up at model LOAD, as a failure or a silent fallback,
+never as slow decode.
+
+Ported by shape (not by copy) from ds4-strix-halo-tp-odinlink commit
+8d45d16, rocm/ds4_rocm_runtime.cuh:5513-5600 (cuda_model_range_ptr).
+
+common/ple_mmap.py -- new "ROCm 7.14 overlapping host registration"
+section:
+  page_rounded_span()  ds4's rounding arithmetic at :5518-5523, kept in
+      shape because the rounding is what manufactures the collision.
+  mapping_span()       the mitigation 16.1 points at: np.memmap already
+      maps from a page-aligned start covering exactly the pages the array
+      needs, so registering THAT extent is the same pages with none of the
+      rounding, and cannot pull a neighbouring slice's page in. Probe rows
+      page-aligned-register and anonymous-mmap-register both pass cleanly;
+      the four shard mappings of a synthetic table register with zero
+      collisions on the real device.
+  MmapPleTable.host_register()  registers the shard mappings and is never
+      fatal. A rejected span is the EXPECTED 7.14 outcome, so it latches
+      table.overlapping, logs why, and the load continues.
+  MmapPleTable.to_device()  the ordinary path is still the plain copy and
+      pays nothing. A latched table stages; an unlatched one tries the
+      plain copy and latches on the specific failure a rejected
+      registration produces -- which does not need THIS table to have
+      registered anything, since a page-adjacent registration anywhere in
+      the process poisons copies out of these pages. Anything else
+      re-raises.
+  staged_copy_to_device()  the fallback loop of :5566 onward. Three
+      properties of that fix are load-bearing and are pinned by tests: the
+      pinned bounce is allocated ONLY on the overlap path, so the ordinary
+      path pays nothing; it is capped at 64 MiB however large the copy is,
+      so the extra RSS is bounded; and it is freed on success AND on every
+      error exit (resize_(0), so the block is gone at that statement
+      rather than whenever the caching host allocator gets round to it).
+  _latch_mapping_unsupported()  the second, silent failure mode at :5548.
+      cudaErrorNotSupported / cudaErrorInvalidValue disables host mapping
+      for the WHOLE process and ds4 says nothing about it. Logged at ERROR
+      with the word LATCHED, because a warning is invisible in a load's
+      log volume and this one is permanent until the seat restarts.
+
+close() unregisters every span it registered, before dropping the memmaps
+those addresses live in.
+
+Kill switch: VLLM_PLE_MMAP_REGISTER, default 0. The registration is the
+new mechanism and stays opt-in; the staged-copy fallback is always armed,
+because the poisoned-copy failure does not require us to have registered
+anything.
+
+Adds tests/models/qwen4_exp/test_ple_mmap_host_registration.py (30 tests,
+GPU-free): the rounding arithmetic and an executable statement of 15.1's
+collision claim, the alignment mitigation, rejection-is-survivable,
+the process-wide latch and its loud log, the bounce's overlap-only
+allocation / 64 MiB cap / free on both exits, the poisoned-copy latch,
+the no-swallow path for unrelated errors, and the knob's default.
+
+Verified in flashnext:dev on gfx1151 (HIP 7.14.60850, torch
+2.13.0+rocm7.14.0): 30 new tests pass; test_ple_mmap.py (82),
+test_ple_mmap_amd.py (15) and test_ple.py (11) still pass; ruff check and
+format clean; tools/check_nix_substrate.py passes. A synthetic table on
+the real device registers 4 spans with no collision, a deliberate
+colliding re-registration returns 712, and the staged copy returns
+byte-exact rows.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ .../test_ple_mmap_host_registration.py        | 576 ++++++++++++++++++
+ vllm/envs.py                                  |   8 +
+ vllm/models/qwen4_exp/common/ple_mmap.py      | 364 ++++++++++-
+ 3 files changed, 941 insertions(+), 7 deletions(-)
+ create mode 100644 tests/models/qwen4_exp/test_ple_mmap_host_registration.py
+
+diff --git a/tests/models/qwen4_exp/test_ple_mmap_host_registration.py b/tests/models/qwen4_exp/test_ple_mmap_host_registration.py
+new file mode 100644
+index 0000000..dd0467b
+--- /dev/null
++++ b/tests/models/qwen4_exp/test_ple_mmap_host_registration.py
+@@ -0,0 +1,576 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Pins on the ROCm 7.14 overlapping-host-registration path of the PLE mmap
++table (RUN3-BRIEF 15.1 / 16.1, ds4_rocm_runtime.cuh:5513-5600).
++
++No GPU: ``torch.cuda.cudart()`` and the pinned allocator are stood in for, so
++every error code the real runtime returns can be driven deterministically —
++including the two that only appear on a 7.14 box with a ~51.2 GB engram table.
++"""
++
++from __future__ import annotations
++
++import logging
++import mmap
++from collections.abc import Iterator
++from pathlib import Path
++from types import SimpleNamespace
++
++import numpy as np
++import pytest
++import safetensors.torch
++import torch
++
++import vllm.models.qwen4_exp.common.ple_mmap as ple_mmap
++
++# The codes the live stack returned when two page-overlapping spans of one
++# mapping were registered inside flashnext:dev on 2026-08-31.
++_OK = 0
++_ALREADY_REGISTERED = 712
++_INVALID_VALUE = 1
++_NOT_SUPPORTED = 801
++
++
++# --------------------------------------------------------------------------- #
++# Fixtures / helpers
++# --------------------------------------------------------------------------- #
++
++
++@pytest.fixture(autouse=True)
++def _restore_mapping_latch() -> Iterator[None]:
++    """The 'mapping unsupported' latch is process-wide by design; no test may
++    leak it into the next one."""
++    saved = ple_mmap._mapping_supported
++    yield
++    ple_mmap._mapping_supported = saved
++
++
++class _FakeCudart:
++    """Records every register/unregister and replays a scripted verdict."""
++
++    def __init__(self, codes: list[int]) -> None:
++        self._codes = list(codes)
++        self.registered: list[tuple[int, int, int]] = []
++        self.unregistered: list[int] = []
++
++    def cudaHostRegister(self, ptr: int, nbytes: int, flags: int) -> object:
++        self.registered.append((ptr, nbytes, flags))
++        code = self._codes.pop(0) if self._codes else _OK
++        return SimpleNamespace(value=code)
++
++    def cudaHostUnregister(self, ptr: int) -> object:
++        self.unregistered.append(ptr)
++        return SimpleNamespace(value=_OK)
++
++
++class _StageRecorder:
++    """Stands in for cudaMallocHost/cudaFreeHost so the bounce's size, its
++    presence, and its release can be asserted without a GPU."""
++
++    def __init__(self) -> None:
++        self.allocated: list[int] = []
++        self.freed: list[int] = []
++
++    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
++        def alloc(nbytes: int) -> torch.Tensor:
++            self.allocated.append(nbytes)
++            return torch.empty(nbytes, dtype=torch.uint8)
++
++        def free(stage: torch.Tensor) -> None:
++            self.freed.append(int(stage.numel()))
++
++        monkeypatch.setattr(ple_mmap, "_alloc_pinned_stage", alloc)
++        monkeypatch.setattr(ple_mmap, "_free_pinned_stage", free)
++
++
++def _use_fake_cudart(monkeypatch: pytest.MonkeyPatch, codes: list[int]) -> _FakeCudart:
++    fake = _FakeCudart(codes)
++    monkeypatch.setattr(torch.cuda, "cudart", lambda: fake)
++    monkeypatch.setattr(
++        ple_mmap,
++        "current_platform",
++        SimpleNamespace(is_cuda_alike=lambda: True, device_name="rocm"),
++    )
++    return fake
++
++
++def _write_ple_layer(directory: Path, *, vocab: int, parts: int, cols: int) -> None:
++    prefix = "model.language_model.layers.0.ple.ple_embedding.ngram_embedding"
++    shard_size = (vocab + parts - 1) // parts
++    raw = torch.arange(vocab * cols, dtype=torch.float32).reshape(vocab, cols)
++    full = (torch.remainder(raw, 6.0) - 3.0).to(torch.float8_e4m3fn)
++    for shard_index in range(parts):
++        start = shard_index * shard_size
++        rows = max(0, min(shard_size, vocab - start))
++        tensors: dict[str, torch.Tensor] = {}
++        if rows > 0:
++            tensors[f"{prefix}.shard_{shard_index}.weight"] = full[start : start + rows]
++        if shard_index == 0:
++            tensors[f"{prefix}.weight_scale"] = torch.tensor(
++                [1.0], dtype=torch.bfloat16
++            )
++        if tensors:
++            safetensors.torch.save_file(
++                tensors, str(directory / f"model-ple-{shard_index:05d}.safetensors")
++            )
++
++
++def _build_table(directory: Path, *, vocab: int, parts: int, cols: int):
++    layer_shards = ple_mmap.discover_shards(str(directory))[0]
++    return ple_mmap.MmapPleTable(
++        layer_shards.shards,
++        (vocab + parts - 1) // parts,
++        cols,
++        torch.float8_e4m3fn,
++        workers=1,
++        chunk=8,
++        model_path=str(directory),
++    )
++
++
++# --------------------------------------------------------------------------- #
++# The rounding is the mechanism: it manufactures the collision.
++# --------------------------------------------------------------------------- #
++
++
++def test_page_rounded_span_rounds_base_down_and_length_up() -> None:
++    page = ple_mmap._page_size()
++    span = ple_mmap.page_rounded_span(page * 4 + 100, 10)
++
++    assert span.base == page * 4
++    assert span.delta == 100
++    # 100 + 10 bytes still costs a whole page.
++    assert span.nbytes == page
++    assert span.base % page == 0
++    assert span.nbytes % page == 0
++
++
++def test_page_rounded_spans_of_disjoint_slices_collide() -> None:
++    """RUN3-BRIEF 15.1's claim, as an executable assertion: two slices that do
++    not overlap by a single byte overlap once rounded, which is why a 51.2 GB
++    table sliced on non-page boundaries hits this as the common case."""
++    page = ple_mmap._page_size()
++    base = page * 64
++    first = ple_mmap.page_rounded_span(base, page + 8)
++    second = ple_mmap.page_rounded_span(base + page + 8, page)
++
++    assert base + page + 8 >= base + (page + 8)  # the slices are disjoint
++    assert first.base + first.nbytes > second.base  # their spans are not
++
++
++def test_mapping_span_is_page_aligned_and_covers_the_array(tmp_path: Path) -> None:
++    payload = bytes(range(256)) * 64
++    path = tmp_path / "shard.bin"
++    path.write_bytes(payload)
++    offset = 100  # deliberately not page-aligned
++    array = np.memmap(
++        path, dtype=np.uint8, mode="r", offset=offset, shape=(len(payload) - offset,)
++    )
++
++    span = ple_mmap.mapping_span(array)
++
++    assert span is not None
++    assert span.base % ple_mmap._page_size() == 0
++    assert span.delta == offset % mmap.ALLOCATIONGRANULARITY
++    # The whole array lives inside the registered extent.
++    assert span.base + span.nbytes >= array.ctypes.data + array.nbytes
++
++
++def test_mapping_span_returns_none_for_a_non_mmap_array() -> None:
++    assert ple_mmap.mapping_span(np.zeros(16, dtype=np.uint8)) is None
++
++
++def test_mapping_spans_of_two_shards_do_not_overlap(tmp_path: Path) -> None:
++    """The alignment mitigation of 16.1: registering the mapping extents
++    instead of the rounded slice spans is what stops shards colliding."""
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    try:
++        spans = [ple_mmap.mapping_span(a) for a in table.mm if a is not None]
++        assert all(s is not None for s in spans)
++        ordered = sorted(spans, key=lambda s: s.base)
++        for lower, upper in zip(ordered, ordered[1:]):
++            assert lower.base + lower.nbytes <= upper.base
++    finally:
++        table.close()
++
++
++# --------------------------------------------------------------------------- #
++# host_register: rejection is survivable, never fatal.
++# --------------------------------------------------------------------------- #
++
++
++def test_host_register_records_spans_and_close_unregisters_them(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    fake = _use_fake_cudart(monkeypatch, [])
++
++    table.host_register()
++
++    assert len(table.registered) == 4
++    assert not table.overlapping
++    # Mapped | ReadOnly, as ds4_rocm_runtime.cuh:5525 registers model ranges.
++    assert all(flags == 0x02 | 0x08 for _ptr, _n, flags in fake.registered)
++
++    registered_bases = [span.base for span in table.registered]
++    table.close()
++    assert fake.unregistered == registered_bases
++    assert table.registered == []
++
++
++def test_overlap_rejection_latches_staging_without_failing_the_load(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    fake = _use_fake_cudart(monkeypatch, [_OK, _ALREADY_REGISTERED, _OK, _OK])
++    try:
++        table.host_register()  # must not raise: the load has to continue
++
++        assert table.overlapping is True
++        # The rejected shard is not recorded, the other three still are, and
++        # the loop did not stop at the rejection.
++        assert len(fake.registered) == 4
++        assert len(table.registered) == 3
++    finally:
++        table.close()
++
++
++def test_unsupported_error_latches_process_wide_and_logs_loudly(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
++) -> None:
++    """ds4_rocm_runtime.cuh:5548 disables host mapping for the whole process
++    on one bad code and says nothing. It has to say something."""
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    _use_fake_cudart(monkeypatch, [_NOT_SUPPORTED])
++    try:
++        with caplog.at_level(logging.ERROR, logger=ple_mmap.logger.name):
++            table.host_register()
++
++        assert ple_mmap._mapping_supported is False
++        assert not table.overlapping  # nothing was registered, so copies are fine
++        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
++        assert len(errors) == 1
++        assert "LATCHED OFF" in errors[0].getMessage()
++    finally:
++        table.close()
++
++
++@pytest.mark.parametrize("code", [_INVALID_VALUE, _NOT_SUPPORTED])
++def test_unsupported_error_stops_registering_further_shards(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    fake = _use_fake_cudart(monkeypatch, [code])
++    try:
++        table.host_register()
++        assert len(fake.registered) == 1
++    finally:
++        table.close()
++
++
++def test_host_register_is_skipped_once_the_latch_is_set(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    fake = _use_fake_cudart(monkeypatch, [])
++    ple_mmap._mapping_supported = False
++    try:
++        table.host_register()
++        assert fake.registered == []
++        assert not table.overlapping
++    finally:
++        table.close()
++
++
++def test_host_register_is_skipped_off_cuda(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    fake = _FakeCudart([])
++    monkeypatch.setattr(torch.cuda, "cudart", lambda: fake)
++    monkeypatch.setattr(
++        ple_mmap,
++        "current_platform",
++        SimpleNamespace(is_cuda_alike=lambda: False, device_name="cpu"),
++    )
++    try:
++        table.host_register()
++        assert fake.registered == []
++    finally:
++        table.close()
++
++
++# --------------------------------------------------------------------------- #
++# to_device: the bounce is on the overlap path only, capped, and always freed.
++# --------------------------------------------------------------------------- #
++
++
++def test_stage_chunk_is_capped_at_64_mib() -> None:
++    assert ple_mmap._STAGE_CHUNK_BYTES == 64 << 20
++
++
++def test_ordinary_path_never_allocates_a_bounce(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++    try:
++        host = torch.arange(32, dtype=torch.uint8)
++        got = table.to_device(host, torch.device("cpu"))
++
++        assert torch.equal(got, host)
++        assert recorder.allocated == []
++    finally:
++        table.close()
++
++
++def test_staged_copy_is_byte_exact_across_chunks(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++    monkeypatch.setattr(ple_mmap, "_STAGE_CHUNK_BYTES", 64)
++    host = torch.arange(200, dtype=torch.uint8).reshape(25, 8).view(torch.float8_e4m3fn)
++
++    got = ple_mmap.staged_copy_to_device(host, torch.device("cpu"))
++
++    assert got.shape == host.shape
++    assert got.dtype == host.dtype
++    assert torch.equal(got.view(torch.uint8), host.view(torch.uint8))
++    # One bounce for the whole copy, capped at the chunk, released once.
++    assert recorder.allocated == [64]
++    assert recorder.freed == [64]
++
++
++def test_staged_copy_caps_the_bounce_below_the_payload(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++    monkeypatch.setattr(ple_mmap, "_STAGE_CHUNK_BYTES", 16)
++
++    ple_mmap.staged_copy_to_device(
++        torch.arange(4096, dtype=torch.uint8), torch.device("cpu")
++    )
++
++    assert recorder.allocated == [16]  # not 4096: RSS is bounded by the cap
++
++
++def test_staged_copy_uses_the_whole_payload_when_it_is_smaller(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++
++    ple_mmap.staged_copy_to_device(
++        torch.arange(8, dtype=torch.uint8), torch.device("cpu")
++    )
++
++    assert recorder.allocated == [8]
++
++
++def test_staged_copy_frees_the_bounce_on_an_error_exit(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++
++    def exploding_empty(*args: object, **kwargs: object) -> torch.Tensor:
++        raise RuntimeError("copy blew up mid-chunk")
++
++    monkeypatch.setattr(ple_mmap.torch, "empty", exploding_empty, raising=True)
++    with pytest.raises(RuntimeError, match="copy blew up"):
++        ple_mmap.staged_copy_to_device(
++            torch.arange(32, dtype=torch.uint8), torch.device("cpu")
++        )
++    # torch.empty is the destination alloc, which happens BEFORE the bounce:
++    # nothing to free yet, and nothing leaked.
++    assert recorder.allocated == []
++    assert recorder.freed == []
++
++
++def test_staged_copy_frees_the_bounce_when_a_chunk_fails(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++
++    def alloc(nbytes: int) -> torch.Tensor:
++        recorder.allocated.append(nbytes)
++
++        class _Poisoned(torch.Tensor):
++            def copy_(self, *args: object, **kwargs: object) -> torch.Tensor:
++                raise RuntimeError("staged chunk failed")
++
++        return torch.empty(nbytes, dtype=torch.uint8).as_subclass(_Poisoned)
++
++    monkeypatch.setattr(ple_mmap, "_alloc_pinned_stage", alloc)
++    with pytest.raises(RuntimeError, match="staged chunk failed"):
++        ple_mmap.staged_copy_to_device(
++            torch.arange(32, dtype=torch.uint8), torch.device("cpu")
++        )
++
++    assert recorder.allocated == [32]
++    assert recorder.freed == [32]  # freed on the error exit, not only on success
++
++
++def test_staged_copy_of_an_empty_tensor_allocates_nothing(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++
++    got = ple_mmap.staged_copy_to_device(
++        torch.empty(0, dtype=torch.uint8), torch.device("cpu")
++    )
++
++    assert got.numel() == 0
++    assert recorder.allocated == []
++
++
++# --------------------------------------------------------------------------- #
++# The half that is easy to miss: the copy fails too.
++# --------------------------------------------------------------------------- #
++
++
++def _poison_to(monkeypatch: pytest.MonkeyPatch, message: str) -> list[int]:
++    """Make the first Tensor.to raise ``message``; later calls behave."""
++    calls: list[int] = []
++    real_to = torch.Tensor.to
++
++    def fake_to(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
++        calls.append(1)
++        if len(calls) == 1:
++            raise RuntimeError(message)
++        return real_to(self, *args, **kwargs)
++
++    monkeypatch.setattr(torch.Tensor, "to", fake_to, raising=True)
++    return calls
++
++
++def test_a_poisoned_plain_copy_latches_staging_and_still_returns_the_rows(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
++) -> None:
++    """16.1's second row: after the rejected registration, a plain H2D from
++    that pointer fails with hipErrorInvalidValue. Detecting the registration
++    error is not enough — this is the path that proves the copy changed too."""
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++    host = torch.arange(32, dtype=torch.uint8)
++    _poison_to(
++        monkeypatch,
++        "CUDA error: invalid argument\nSearch for `hipErrorInvalidValue'",
++    )
++    try:
++        with caplog.at_level(logging.ERROR, logger=ple_mmap.logger.name):
++            got = table.to_device(host, torch.device("cpu"))
++
++        assert torch.equal(got, host)
++        assert table.overlapping is True
++        assert recorder.allocated == [32]
++        assert recorder.freed == [32]
++        assert any(r.levelno >= logging.ERROR for r in caplog.records)
++    finally:
++        table.close()
++
++
++def test_a_latched_table_stages_without_retrying_the_plain_copy(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++    table.overlapping = True
++    calls = _poison_to(monkeypatch, "CUDA error: invalid argument")
++    try:
++        got = table.to_device(torch.arange(32, dtype=torch.uint8), torch.device("cpu"))
++        assert got.numel() == 32
++        assert calls == []  # never even attempted
++        assert recorder.allocated == [32]
++    finally:
++        table.close()
++
++
++def test_an_unrelated_copy_failure_is_not_swallowed(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    table = _build_table(tmp_path, vocab=64, parts=4, cols=8)
++    recorder = _StageRecorder()
++    recorder.install(monkeypatch)
++    _poison_to(monkeypatch, "CUDA error: out of memory")
++    try:
++        with pytest.raises(RuntimeError, match="out of memory"):
++            table.to_device(torch.arange(32, dtype=torch.uint8), torch.device("cpu"))
++        assert not table.overlapping
++        assert recorder.allocated == []
++    finally:
++        table.close()
++
++
++@pytest.mark.parametrize(
++    "message",
++    [
++        "CUDA error: invalid argument",
++        "hipErrorAlreadyMapped",
++        "hipErrorHostMemoryAlreadyRegistered",
++        "part or all of the requested memory range is already mapped",
++    ],
++)
++def test_the_measured_failure_texts_are_all_recognized(message: str) -> None:
++    assert ple_mmap._is_staged_copy_failure(RuntimeError(message))
++
++
++def test_an_ordinary_runtime_error_is_not_recognized() -> None:
++    assert not ple_mmap._is_staged_copy_failure(RuntimeError("shape mismatch"))
++
++
++# --------------------------------------------------------------------------- #
++# The knob.
++# --------------------------------------------------------------------------- #
++
++
++def test_register_knob_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
++    monkeypatch.delenv("VLLM_PLE_MMAP_REGISTER", raising=False)
++    import vllm.envs as envs
++
++    assert envs.environment_variables["VLLM_PLE_MMAP_REGISTER"]() is False
++
++
++def test_attach_table_registers_only_when_the_knob_is_on(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    _write_ple_layer(tmp_path, vocab=64, parts=4, cols=8)
++    shard_map = ple_mmap.discover_shards(str(tmp_path))
++    fake = _use_fake_cudart(monkeypatch, [])
++
++    for knob, expected in ((False, 0), (True, 4)):
++        monkeypatch.setattr(ple_mmap.envs, "VLLM_PLE_MMAP_REGISTER", knob)
++        fake.registered.clear()
++        embedding = ple_mmap.MmapNgramEmbedding(64, 8)
++        ple_mmap.set_weight_scale(
++            embedding, torch.tensor([1.0], dtype=torch.bfloat16), torch.device("cpu")
++        )
++        ple_mmap._attach_table(
++            embedding,
++            shard_map[0],
++            split_ngram_parts=4,
++            layer_idx=0,
++            model_path=str(tmp_path),
++        )
++        try:
++            assert len(fake.registered) == expected
++        finally:
++            embedding.table.close()
+diff --git a/vllm/envs.py b/vllm/envs.py
+index bf219ed..efd9b18 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -327,6 +327,7 @@ if TYPE_CHECKING:
+     VLLM_PLE_MMAP_WORKERS: int = 32
+     VLLM_PLE_MMAP_CHUNK: int = 2048
+     VLLM_PLE_MMAP_PREWARM: bool = False
++    VLLM_PLE_MMAP_REGISTER: bool = False
+ 
+ 
+ def get_default_cache_root():
+@@ -2182,6 +2183,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     # If set, stream the PLE table once at load to warm the page cache
+     # (bounded by available memory).
+     "VLLM_PLE_MMAP_PREWARM": lambda: bool(int(os.getenv("VLLM_PLE_MMAP_PREWARM", "0"))),
++    # If set, host-register the PLE table's shard mappings at load. Off by
++    # default: ROCm 7.14 rejects registrations whose page-rounded spans
++    # overlap, and the module survives that rather than depending on it.
++    "VLLM_PLE_MMAP_REGISTER": lambda: bool(
++        int(os.getenv("VLLM_PLE_MMAP_REGISTER", "0"))
++    ),
+ }
+ 
+ 
+@@ -2355,6 +2362,7 @@ def compile_factors() -> dict[str, object]:
+         "VLLM_PLE_MMAP_WORKERS",
+         "VLLM_PLE_MMAP_CHUNK",
+         "VLLM_PLE_MMAP_PREWARM",
++        "VLLM_PLE_MMAP_REGISTER",
+     }
+ 
+     from vllm.config.utils import normalize_value
+diff --git a/vllm/models/qwen4_exp/common/ple_mmap.py b/vllm/models/qwen4_exp/common/ple_mmap.py
+index 8325e48..6a06f49 100644
+--- a/vllm/models/qwen4_exp/common/ple_mmap.py
++++ b/vllm/models/qwen4_exp/common/ple_mmap.py
+@@ -43,6 +43,18 @@ Knobs (env, registered in ``vllm/envs.py``):
+   VLLM_PLE_MMAP_CHUNK=2048   rows per gather task
+   VLLM_PLE_MMAP_PREWARM=0    1 = stream the table once at load, bounded by
+                              free memory, to warm the page cache
++  VLLM_PLE_MMAP_REGISTER=0   1 = host-register the shard mappings at load
++                             (see "ROCm 7.14 overlapping host registration")
++
++ROCm 7.14 rejects a ``hipHostRegister`` whose PAGE-ROUNDED span overlaps an
++already-registered one, and — the half that is easy to miss — a subsequent
++plain ``hipMemcpy(H2D)`` out of that same host pointer fails too. Both rows
++were measured on this stack (RUN3-BRIEF 16.1); with a ~51.2 GB engram table
++sliced into non-page-aligned spans the collision is the common case, not an
++edge case. Everything this module does to survive it lives in the
++"overlapping host registration" section below: registrations are rejected,
++never fatal, and a table that has seen a collision serves every further H2D
++through a capped pinned bounce.
+ """
+ 
+ from __future__ import annotations
+@@ -51,12 +63,13 @@ import functools
+ import glob
+ import json
+ import math
++import mmap
+ import os
+ import struct
+ import time
+ from concurrent.futures import ThreadPoolExecutor
+ from dataclasses import dataclass
+-from typing import TYPE_CHECKING, Any
++from typing import TYPE_CHECKING, Any, NamedTuple
+ 
+ import numpy as np
+ import regex as re
+@@ -94,6 +107,35 @@ _MAX_HEADER_BYTES = 100 << 20  # 100 MB
+ _PREWARM_HEADROOM_BYTES = 8 << 30  # 8 GiB
+ _LOG_INTERVAL_S = 60.0
+ 
++# hipHostRegister flags (hip/hip_runtime_api.h; identical values in CUDA).
++_HOST_REGISTER_MAPPED = 0x02
++_HOST_REGISTER_READ_ONLY = 0x08
++# hipError_t codes. HIP mirrors the CUDA runtime numbering. 712 and 1 are not
++# inferred from a header: both were observed on this stack by registering two
++# page-overlapping spans and then copying out of the rejected one.
++_ERR_INVALID_VALUE = 1
++_ERR_ALREADY_MAPPED = 208
++_ERR_HOST_MEMORY_ALREADY_REGISTERED = 712
++_ERR_NOT_SUPPORTED = 801
++# The registration collided with a span that is already registered. Recoverable:
++# the table stages its copies instead.
++_OVERLAP_ERRORS = frozenset({_ERR_ALREADY_MAPPED, _ERR_HOST_MEMORY_ALREADY_REGISTERED})
++# The runtime cannot map host memory at all. ds4 latches this process-wide.
++_UNSUPPORTED_ERRORS = frozenset({_ERR_INVALID_VALUE, _ERR_NOT_SUPPORTED})
++# Staging chunk AND the pinned bounce's size cap, so the extra RSS a collided
++# table costs is bounded by this regardless of how large the copy is.
++_STAGE_CHUNK_BYTES = 64 << 20
++# Substrings of the failure a plain H2D raises when the source pages carry a
++# rejected registration ("CUDA error: invalid argument" / hipErrorInvalidValue,
++# RUN3-BRIEF 16.1's second row). Matched narrowly: anything else re-raises.
++_STAGED_COPY_MARKERS = (
++    "hiperrorinvalidvalue",
++    "hiperroralreadymapped",
++    "hiperrorhostmemoryalreadyregistered",
++    "invalid argument",
++    "already mapped",
++)
++
+ _SHARD_RE = re.compile(
+     r"layers\.(\d+)\.ple\.ple_embedding\.ngram_embedding\.shard_(\d+)\.weight$"
+ )
+@@ -290,6 +332,189 @@ def _read_scale(entry: tuple[str, int, int, str]) -> torch.Tensor:
+     return torch.frombuffer(raw_bytes, dtype=torch_dtype).clone().squeeze()
+ 
+ 
++# --------------------------------------------------------------------------- #
++# ROCm 7.14 overlapping host registration.
++#
++# Ported by shape (not by copy) from ds4-strix-halo-tp-odinlink commit 8d45d16,
++# rocm/ds4_rocm_runtime.cuh:5513-5600 (cuda_model_range_ptr). Their mechanism
++# and ours are the same: register a span of a large read-only model mmap so it
++# can feed the device, and fall back when 7.14 refuses.
++#
++# The refusal is structural, not incidental. A registration is PAGE-ROUNDED —
++# base down, length up — so two logically DISJOINT slices of one mmap collide
++# as soon as their rounded spans share a page. Measured on this stack
++# (RUN3-BRIEF 16.1): the second registration returns 712, and a subsequent
++# plain hipMemcpy(H2D) out of that pointer then fails with hipErrorInvalidValue.
++# Detecting the registration error is therefore NOT sufficient; the copy has to
++# change too, which is what MmapPleTable.to_device does.
++#
++# Registering the mmap's own page-aligned extent rather than the rounded slice
++# span is the mitigation 16.1 points at ("page-aligned-register and
++# anonymous-mmap-register both pass cleanly"): it is the same pages with none
++# of the rounding, so it cannot pull a neighbouring slice's page in.
++# --------------------------------------------------------------------------- #
++
++# ds4's g_model_range_mapping_supported (:5548). Once cleared it is never set
++# again for the life of the process — see _latch_mapping_unsupported.
++_mapping_supported = True
++
++
++class _Span(NamedTuple):
++    """A host span to hand to ``cudaHostRegister``."""
++
++    base: int
++    """Page-aligned start address."""
++    delta: int
++    """Bytes between ``base`` and the caller's address (0 when aligned)."""
++    nbytes: int
++    """Length from ``base``, a whole number of pages."""
++
++
++@functools.cache
++def _page_size() -> int:
++    """Return the runtime page size registrations are rounded to."""
++    size = os.sysconf("SC_PAGESIZE")
++    return size if size > 0 else 4096
++
++
++def page_rounded_span(addr: int, nbytes: int) -> _Span:
++    """Round ``[addr, addr + nbytes)`` out to page boundaries.
++
++    The arithmetic ds4 does at ds4_rocm_runtime.cuh:5518-5523, kept here
++    verbatim in shape because it is the thing that manufactures the
++    collision: the rounding, not the tensors, is what makes two disjoint
++    slices of one mmap touch.
++    """
++    page = _page_size()
++    base = addr & ~(page - 1)
++    delta = addr - base
++    return _Span(base, delta, (delta + nbytes + page - 1) & ~(page - 1))
++
++
++def mapping_span(array: np.memmap) -> _Span | None:
++    """Return the page-aligned extent of the mmap backing ``array``.
++
++    ``np.memmap`` maps from ``offset`` rounded down to the allocation
++    granularity and points the array at the remainder, so the mapping itself
++    is already page-aligned and covers exactly the pages the array needs.
++    Registering *that* is the alignment mitigation of RUN3-BRIEF 16.1.
++
++    Returns:
++        The extent, or None when the backing object is not a plain mmap (in
++        which case the caller must fall back to :func:`page_rounded_span`
++        and accept the collision risk that comes with rounding).
++    """
++    backing: object = array
++    while backing is not None and not isinstance(backing, mmap.mmap):
++        backing = getattr(backing, "base", None)
++    if not isinstance(backing, mmap.mmap):
++        return None
++    offset = int(getattr(array, "offset", 0))
++    base = array.ctypes.data - (offset % mmap.ALLOCATIONGRANULARITY)
++    if base % _page_size():
++        return None
++    return _Span(base, array.ctypes.data - base, len(backing))
++
++
++def _host_register(span: _Span) -> int:
++    """Register ``span`` read-only and mapped; return the raw error code."""
++    result = torch.cuda.cudart().cudaHostRegister(
++        span.base, span.nbytes, _HOST_REGISTER_MAPPED | _HOST_REGISTER_READ_ONLY
++    )
++    return int(result.value)
++
++
++def _host_unregister(span: _Span) -> int:
++    """Unregister ``span``; return the raw error code."""
++    return int(torch.cuda.cudart().cudaHostUnregister(span.base).value)
++
++
++def _latch_mapping_unsupported(shard_index: int, err: int) -> None:
++    """Disable host mapping for the rest of the process, loudly.
++
++    ds4 sets this flag at ds4_rocm_runtime.cuh:5548 and never clears it: one
++    ``cudaErrorNotSupported``/``cudaErrorInvalidValue`` silently costs the
++    whole process its zero-copy mapping path. RUN3-BRIEF 15.1 flags it as the
++    second, easy-to-miss failure mode, so the latch is logged at error level —
++    a warning is invisible in a model load's log volume, and this one is
++    permanent and unrecoverable without a restart.
++    """
++    global _mapping_supported
++    _mapping_supported = False
++    logger.error(
++        "PLE mmap: host registration of shard %d returned code=%d, which "
++        "means this runtime cannot map host memory at all. Host mapping is "
++        "now LATCHED OFF for the whole process and will not be retried until "
++        "the seat restarts; every engram copy falls back to ordinary "
++        "unpinned H2D. This is ds4_rocm_runtime.cuh:5548's failure mode "
++        "(RUN3-BRIEF 15.1) — it is not expected on ROCm 7.14 and should be "
++        "investigated rather than tolerated.",
++        shard_index,
++        err,
++    )
++
++
++def _is_staged_copy_failure(exc: BaseException) -> bool:
++    """True when ``exc`` looks like a copy poisoned by a rejected span."""
++    text = str(exc).lower()
++    return any(marker in text for marker in _STAGED_COPY_MARKERS)
++
++
++def _alloc_pinned_stage(nbytes: int) -> torch.Tensor:
++    """Allocate the transient pinned bounce (ds4's ``cudaMallocHost``).
++
++    Split out from :func:`staged_copy_to_device` so tests can pin that it is
++    reached only on the overlap path and that every exit frees it.
++    """
++    return torch.empty(nbytes, dtype=torch.uint8, pin_memory=True)
++
++
++def _free_pinned_stage(stage: torch.Tensor) -> None:
++    """Release the pinned bounce (ds4's ``cudaFreeHost``).
++
++    ``resize_(0)`` frees the pinned block at this statement rather than
++    whenever the caching host allocator next feels like it, so the 64 MiB is
++    gone before the caller returns on either exit path.
++    """
++    stage.untyped_storage().resize_(0)
++
++
++def staged_copy_to_device(host: torch.Tensor, device: torch.device) -> torch.Tensor:
++    """Copy ``host`` to ``device`` through a capped, transient pinned bounce.
++
++    The fallback loop of ds4_rocm_runtime.cuh:5566 onward. Three properties of
++    that fix are load-bearing and are what this function exists to preserve:
++    the bounce is allocated ONLY here, on the overlap path, so the ordinary
++    path pays nothing; it is capped at 64 MiB however large the copy is, so
++    the extra RSS is bounded; and it is freed on success and on every error
++    exit.
++
++    Raises:
++        RuntimeError: the pinned allocation failed, or a staged chunk failed
++            to copy. Fails closed (invariant 4) rather than serving a
++            half-written tensor.
++    """
++    src = host.contiguous()
++    dst = torch.empty(src.shape, dtype=src.dtype, device=device)
++    src_bytes = src.reshape(-1).view(torch.uint8)
++    dst_bytes = dst.reshape(-1).view(torch.uint8)
++    total = int(src_bytes.numel())
++    if total == 0:
++        return dst
++    stage = _alloc_pinned_stage(min(total, _STAGE_CHUNK_BYTES))
++    try:
++        done = 0
++        while done < total:
++            n = min(_STAGE_CHUNK_BYTES, total - done)
++            stage[:n].copy_(src_bytes[done : done + n])
++            dst_bytes[done : done + n].copy_(stage[:n], non_blocking=False)
++            done += n
++    finally:
++        _free_pinned_stage(stage)
++        del stage
++    return dst
++
++
+ # --------------------------------------------------------------------------- #
+ # The mmap-backed table itself.
+ # --------------------------------------------------------------------------- #
+@@ -336,6 +561,12 @@ class MmapPleTable:
+             )
+             self.rows_total += rows
+         self.pool = ThreadPoolExecutor(max_workers=self.workers)
++        # Spans handed to cudaHostRegister, to be unregistered by close().
++        self.registered: list[_Span] = []
++        # Latched once a page-adjacent registration is rejected, or once a
++        # plain H2D out of this table's rows fails the way a rejected
++        # registration makes it fail. Every later copy stages.
++        self.overlapping = False
+         self._pending = 0
+         self._errors = 0
+         self._rows_since_log = 0
+@@ -431,6 +662,103 @@ class MmapPleTable:
+         self._rows_since_log = 0
+         self._last_log = now
+ 
++    def host_register(self) -> None:
++        """Host-register this table's shard mappings, tolerating rejection.
++
++        Registers each shard's page-aligned mapping extent (see
++        :func:`mapping_span`) rather than the page-rounded slice span, which
++        is the mitigation RUN3-BRIEF 16.1 measured: identical pages, none of
++        the rounding that makes two disjoint slices of one mmap collide.
++
++        Nothing here is fatal. A rejected span is the expected ROCm 7.14
++        outcome for an engram table (15.1: the common case, not an edge
++        case), so it latches ``overlapping`` and the model load continues —
++        the rows are then served through :meth:`to_device`'s pinned bounce.
++        """
++        if self._closed:
++            return
++        if not current_platform.is_cuda_alike():
++            logger.info(
++                "PLE mmap: skipping host registration on %s; cudaHostRegister "
++                "is only available on CUDA/ROCm",
++                current_platform.device_name,
++            )
++            return
++        if not _mapping_supported:
++            # Already latched off by an earlier table; say so once more rather
++            # than silently skipping, and do not re-probe.
++            logger.warning(
++                "PLE mmap: host mapping is latched off for this process; "
++                "serving this table through ordinary copies"
++            )
++            return
++        for shard_index, array in enumerate(self.mm):
++            if array is None:
++                continue
++            span = mapping_span(array)
++            if span is None:
++                # No plain mmap to register: fall back to ds4's page-ROUNDED
++                # span, accepting that rounding is what causes collisions.
++                span = page_rounded_span(array.ctypes.data, array.nbytes)
++            err = _host_register(span)
++            if err == 0:
++                self.registered.append(span)
++                continue
++            if err in _OVERLAP_ERRORS:
++                self.overlapping = True
++                logger.warning(
++                    "PLE mmap: shard %d host registration rejected as already "
++                    "mapped (code=%d). ROCm 7.14 rounds registrations to page "
++                    "boundaries, so disjoint spans of one engram mmap collide "
++                    "(RUN3-BRIEF 15.1/16.1); plain H2D out of these pages "
++                    "fails too, so this table now stages every copy through a "
++                    "%d MiB pinned bounce. The load continues.",
++                    shard_index,
++                    err,
++                    _STAGE_CHUNK_BYTES >> 20,
++                )
++                continue
++            if err in _UNSUPPORTED_ERRORS:
++                _latch_mapping_unsupported(shard_index, err)
++                return
++            logger.warning(
++                "PLE mmap: shard %d host registration failed (code=%d); the "
++                "table still serves rows through ordinary copies",
++                shard_index,
++                err,
++            )
++
++    def to_device(self, host: torch.Tensor, device: torch.device) -> torch.Tensor:
++        """Copy gathered rows to ``device``, surviving a poisoned source.
++
++        The ordinary path is the plain copy and pays nothing. A table that has
++        already seen an overlap goes straight to the bounce; one that has not
++        tries the plain copy and latches on the specific failure a rejected
++        registration produces (RUN3-BRIEF 16.1's second row,
++        ``h2d_copy=invalid argument``). The latch matters because that failure
++        does not need THIS table to have registered anything — a page-adjacent
++        registration anywhere in the process poisons copies out of these pages.
++        """
++        if not self.overlapping:
++            try:
++                return host.to(device, non_blocking=True)
++            except RuntimeError as exc:
++                if not _is_staged_copy_failure(exc):
++                    raise
++                self.overlapping = True
++                logger.error(
++                    "PLE mmap: H2D copy out of the engram table failed (%s). "
++                    "This is the second half of the ROCm 7.14 "
++                    "overlapping-host-registration trap (RUN3-BRIEF 16.1): a "
++                    "page-adjacent registration in this process poisons plain "
++                    "copies out of these pages. Retrying through a %d MiB "
++                    "pinned bounce, and staging every further copy on this "
++                    "table.",
++                    exc,
++                    _STAGE_CHUNK_BYTES >> 20,
++                )
++        return staged_copy_to_device(host, device)
++
+     def prewarm(self, max_bytes: int) -> int:
+         """Stream up to ``max_bytes`` of the table into the page cache.
+ 
+@@ -481,6 +809,17 @@ class MmapPleTable:
+             return
+         self._closed = True
+         self.pool.shutdown(wait=False)
++        # Unregister before dropping the memmaps: the spans are addresses into
++        # mappings that go away with the last reference to them.
++        for span in self.registered:
++            err = _host_unregister(span)
++            if err != 0:
++                logger.warning(
++                    "PLE mmap: host unregister of 0x%x failed (code=%d)",
++                    span.base,
++                    err,
++                )
++        self.registered.clear()
+         self.mm = [None] * len(self.mm)
+ 
+ 
+@@ -568,11 +907,13 @@ class MmapNgramEmbedding(nn.Module):
+                 f"itemsize={itemsize}"
+             )
+         out = torch.from_numpy(rows).view(table.torch_dtype)
+-        # non_blocking=True has no effect here: `rows` (from table.gather)
+-        # is pageable host memory, not pinned, so this H2D copy is
+-        # effectively synchronous. Pinned staging (Phase-4 lever 5) is a
+-        # separate, not-yet-pulled lever, not something this line hides.
+-        out = out.to(ids.device, non_blocking=True)
++        # The ordinary path inside to_device is still the plain copy, and
++        # non_blocking=True has no effect on it: `rows` (from table.gather) is
++        # pageable host memory, not pinned, so it is effectively synchronous.
++        # Pinned staging as a THROUGHPUT lever (Phase-4 lever 5) remains
++        # un-pulled; the bounce to_device can take is a correctness fallback
++        # for the ROCm 7.14 registration trap, on that path only.
++        out = table.to_device(out, ids.device)
+         return out.reshape(*ids.shape, self.embedding_dim)
+ 
+ 
+@@ -913,6 +1254,9 @@ def _attach_table(
+     embedding.torch_dtype = table.torch_dtype
+     table_bytes = table.rows_total * row_bytes
+ 
++    if envs.VLLM_PLE_MMAP_REGISTER:
++        table.host_register()
++
+     if envs.VLLM_PLE_MMAP_PREWARM:
+         bound = compute_prewarm_bound(table_bytes, _mem_available_bytes())
+         read = table.prewarm(bound)
+@@ -926,13 +1270,16 @@ def _attach_table(
+     embedding.table = table
+     logger.info(
+         "PLE mmap: layer %d attached, %d shards, %d rows x %d B "
+-        "(%.2f GiB on disk), %d workers",
++        "(%.2f GiB on disk), %d workers, %d registered span(s), "
++        "overlapping=%s",
+         layer_idx,
+         len(layer_shards.shards),
+         table.rows_total,
+         row_bytes,
+         table_bytes / (1 << 30),
+         table.workers,
++        len(table.registered),
++        table.overlapping,
+     )
+ 
+ 
+@@ -1006,8 +1353,11 @@ __all__ = [
+     "compute_prewarm_bound",
+     "discover_shards",
+     "enabled",
++    "mapping_span",
++    "page_rounded_span",
+     "parse_safetensors_header",
+     "resolve_model_path",
+     "set_weight_scale",
++    "staged_copy_to_device",
+     "validate_shards_for",
+ ]
+-- 
+2.55.0
+
