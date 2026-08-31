@@ -115,4 +115,28 @@ fi
 
 write_receipt "$STATUS"
 python3 -c "import json,sys; sys.exit(0 if json.load(open('$OUT'))['status']=='pass' else 1)"
+
+# ── Checkpoint purity (RUN3-BRIEF §18.3) ─────────────────────────────────────
+# cp-build runs this script as a checkpoint, and a checkpoint is contractually
+# forbidden conflictDomains: it owns no path, so nothing it writes is ever
+# committed, and the driver rejects any attempt that leaves a TRACKED file
+# changed ("changed tracked files instead of validating the prepared base").
+# results/receipts/build.json IS tracked, and this receipt legitimately drifts
+# on every run — wall_clock_s always, image_digest on any rebuild, fork_commit
+# whenever the fork head moves (which is the point of a build). So the generic
+# equal-modulo-ts restore in receipt-restore.py cannot settle it.
+#
+# Mirror FIRST so the durable copy under $FN_STATE_DIR/receipts carries the new
+# truth, then restore the tracked copy, which is disposable by contract. This
+# runs only after the pass assertion above, so a failed build still fails loudly
+# and never reaches the restore.
+# build.sh does not source host/fn-env.sh, so carry that file's own default
+# (fn-env.sh:25) — without it FN_STATE_DIR is unset, receipt-restore.py skips
+# the mirror by design, and cp-close's `--require build` fails at the end of
+# the night with the build receipt nowhere on disk.
+export FN_STATE_DIR="${FN_STATE_DIR:-$HOME/.local/state/flashnext}"
+python3 "$REPO_ROOT/scripts/receipt-restore.py" "$REPO_ROOT" || true
+if git -C "$REPO_ROOT" ls-files --error-unmatch results/receipts/build.json >/dev/null 2>&1; then
+    git -C "$REPO_ROOT" checkout -- results/receipts/build.json || true
+fi
 echo "==> flashnext:dev built; receipt: $OUT"
