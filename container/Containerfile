@@ -161,5 +161,20 @@ RUN echo "/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel/share/amd_smi" 
       > /opt/venv/lib/python3.12/site-packages/amd_smi_path.pth \
     && python3 -c "import amdsmi; print('amdsmi importable')"
 
+# Multi-node TP=2 stands a Ray head on the coordinator and joins the worker
+# (host/fn-cluster-up.sh), but `pip install -e /opt/vllm` never pulls Ray:
+# vLLM declares it as an extra, not a core dependency. The image therefore had
+# no `ray` on PATH at all, and cp-tp2 died at bring-up with
+#   crun: executable file `ray` not found in $PATH
+# after clearing preflight, the guards, the reap gate and the image ship. The
+# pin is the fork's OWN ROCm pin (requirements/test/rocm.in:24), whose comment
+# records that 2.55.1 "includes worker startup getenv/setenv race fix" — the
+# failure mode a two-node bring-up is most exposed to. Installed LAST so the
+# expensive engine layers above stay cached, and asserted not to disturb the
+# pinned torch substrate.
+RUN pip install "ray[cgraph,default]==2.55.1" \
+    && ray --version \
+    && python3 -c "import torch; assert torch.__version__.startswith('2.13.0+rocm'), torch.__version__; print('torch intact:', torch.__version__)"
+
 WORKDIR /opt/vllm
 CMD ["bash"]
