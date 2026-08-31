@@ -85,15 +85,27 @@ export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$FN_STATE_DIR/triton}"
 # only after a committed socket-transport benchmark is banked.
 #
 # NCCL_SOCKET_IFNAME is COMPUTED from `ip -br addr`: only Thunderbolt rails
-# that actually carry a routable /30 IP qualify. Rail 0 (thunderbolt0,
-# 10.99.0.x) is guaranteed; rail 1 (thunderbolt1) is trained but
-# IP-unconfigured today (dotfiles modules/lowlat-cluster.nix parks it) and
-# MUST NOT be listed until it has a peer IP — a peerless link-local rail in
-# the list hangs RCCL bootstrap. We log which rails we chose rather than
-# hardcoding both.
+# that actually carry a routable /30 IP AND answer on the far end qualify.
+# Both rails now do — rail0 (cable A, 10.99.0.x) since the fleet was built,
+# rail2 (cable B, 10.99.2.x) since dotfiles#274 gave it a real /30 on both
+# ends. Before that, rail 2 was trained but link-local-only, and listing it
+# hung RCCL bootstrap; that is the state this function's gates were written
+# against and they stay, because an addressed-but-dark rail produces the same
+# hang and is exactly what a half-healed cable looks like.
+#
+# We compute rather than hardcode so a dark rail drops itself out with a log
+# line instead of hanging the run. Expect `rail0,rail2` on a healthy pair.
 fn_choose_rails() {
   local rail addr peer chosen=""
-  for rail in thunderbolt0 thunderbolt1; do
+  # rail0 (cable A, 10.99.0.x) and rail2 (cable B, 10.99.2.x). These names are
+  # CABLE-BOUND since dotfiles#266 — pinned by .link Name= on each NHI's PCI
+  # path — replacing thunderbolt0/thunderbolt1, which were probe-order and
+  # flipped on both twins at the 2026-08-31 12:27 reboot. The old names no
+  # longer exist on either node, so leaving them here would have sent every
+  # rail to the "absent on this node" branch, emptied NCCL_SOCKET_IFNAME, and
+  # dropped silently to the 5GbE wire fallback below — banking a wire receipt
+  # from what looked like a rail night.
+  for rail in rail0 rail2; do
     if [ ! -e "/sys/class/net/$rail" ]; then
       echo "fn-env: rail $rail absent on this node; not listed" >&2
       continue
@@ -106,7 +118,7 @@ fn_choose_rails() {
       continue
     fi
     # Peer-reachability gate: a rail can carry a configured /30 address while
-    # its peer path is dark (measured 2026-08-30: coordinator thunderbolt0 UP
+    # its peer path is dark (measured 2026-08-30: coordinator rail 0 UP
     # with 10.99.0.1/30 and the peer unreachable). A dark-but-addressed rail
     # in NCCL_SOCKET_IFNAME hangs RCCL bootstrap exactly like a peerless one.
     # Three packets, ANY reply accepts: a cold neighbour cache drops the

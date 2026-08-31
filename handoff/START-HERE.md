@@ -257,10 +257,37 @@ that session). What changed relative to the expectations written above:
   each other's hostnames to 10.99.9.x (verified live with getent, plus across the worker's
   reboot). The two-rank Gloo run without any pin is the acceptance test dotfiles#273 names.
   Retire the pin when convenient; the %%,* trim note still applies while it exists.
-- **thunderbolt1 has its /30**: 10.99.2.1/2 live, 0.12 ms, TCP door open (HTTP through
-  10.99.2.2:12345 verified). The comma-list hang state is gone; the aggregation experiment is
-  unblocked. The profile (tb-fleet2) is pinned to the physical NHI via NM match.path — a
-  probe-order flip parks it loudly instead of crossing the cables.
+- **The rails are `rail0` and `rail2` now, and they are CABLES, not probe order** (dotfiles#266,
+  landed 2026-08-31 ~13:30). Read this before you type `thunderbolt0` anywhere: that name no
+  longer exists on either twin.
+  - `rail0` = cable A = 10.99.0.x, the fast/tensor rail, the one usb4-stream provisions.
+  - `rail2` = cable B = 10.99.2.x, the bench and aggregation rail.
+  - Both are pinned by `.link Name=` on each NHI's PCI path, per host, so the name means one
+    physical cable on both twins across every boot.
+  - Verified live on both twins: `rail0` → `pci-0000:c5:00.6` (coord) / `pci-0000:c4:00.5`
+    (worker); `rail2` → `pci-0000:c5:00.5` / `pci-0000:c4:00.6`. All three rails ping.
+  - `GLOO_SOCKET_IFNAME`, `NCCL_SOCKET_IFNAME` and anything else naming an interface must use
+    `rail0`/`rail2`.
+
+  **What the 12:27 reboot actually did**, because the previous version of this bullet claimed
+  rail 2 was live and it was not: the netdev names flipped on BOTH twins. `tb-fleet2` refused
+  to activate (it required `thunderbolt1` AND cable B's path, which had become contradictory)
+  and parked — that fail-safe worked. But `tb-fleet` was name-bound only, so 10.99.0.x came up
+  on **cable B** while the streams stayed on cable A. Rail 2 was dark from 12:27 until the fix.
+  Both rails are up now, ~0.10 ms each, TCP doors on the right interfaces.
+
+- **Cable A vs cable B is not a TB5-vs-TB3 question.** Both cables train at 20.0 Gb/s per lane,
+  2 lanes, 40 Gb/s — re-confirmed live 2026-08-31. Warm-vs-cold is the only difference you will
+  measure between them; when both are warm they are within noise of each other (0.093 vs
+  0.094 ms over 400 samples). Do not attribute bench deltas to the cable generation.
+
+- **PM QoS now holds 100 µs, not 0** (dotfiles#257). The old 0 admitted POLL alone — a
+  full-boost busy-wait that cost **70 W per box at idle**, on an APU where package power is
+  shared with the GPU. Now 10 W (coord) / 6 W (worker), with rail RTT ~0.10 ms instead of
+  0.054 ms. Nearly the whole latency win was always the C3 block, not the POLL floor (0.10 ms
+  against 0.83 ms unconstrained). **This changes your baseline**: an RTT figure banked before
+  today was measured on cores that never idled. Re-baseline before comparing transports, and
+  expect more GPU boost headroom during a long run.
 - **Before a TP=2 run**: `systemctl start flashnext-lane.target` on BOTH twins (it stops
   llama-swap via mutual Conflicts — tested live in both directions); run ranks as transient
   units with `BindsTo=flashnext-lane.target`. `fn-cluster-up.sh/down.sh` should adopt this and

@@ -104,7 +104,9 @@ check_hold worker "$(worker "$(declare -f latency_hold_probe); latency_hold_prob
 # --- 3. per-rail link-speed record, both nodes ---------------------------------
 rail_speeds() {  # emits "<rail> <speed-Mb/s>|absent" lines for the two rails
   local rail
-  for rail in thunderbolt0 thunderbolt1; do
+  # rail0/rail2 are cable-bound names since dotfiles#266; thunderbolt0/1 no
+  # longer exist on either twin.
+  for rail in rail0 rail2; do
     if [ -r "/sys/class/net/$rail/speed" ]; then
       printf '%s %s\n' "$rail" "$(cat "/sys/class/net/$rail/speed" 2>/dev/null || echo down)"
     else
@@ -147,7 +149,7 @@ rtt_probe_node() {  # $@ = interfaces to probe
   done
 }
 is_listed() { case ",$NCCL_SOCKET_IFNAME," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
-PROBE_IFACES="thunderbolt0 thunderbolt1"
+PROBE_IFACES="rail0 rail2"
 if is_listed enp191s0; then
   PROBE_IFACES="$PROBE_IFACES enp191s0"
 fi
@@ -209,7 +211,7 @@ for n in ("coordinator", "worker"):
     hold[n] = {"unit": u, "cpu_dma_latency": v}
 rails = {}
 for node in ("coordinator", "worker"):
-    for rail in ("thunderbolt0", "thunderbolt1", "enp191s0"):
+    for rail in ("rail0", "rail2", "enp191s0"):
         if f"rtt_us_{node}_{rail}" in kv or f"speed_{node}_{rail}" in kv:
             rails.setdefault(rail, {})[node] = {
                 "speed_mbps": kv.get(f"speed_{node}_{rail}"),
