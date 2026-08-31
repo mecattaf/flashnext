@@ -219,7 +219,46 @@ worker "mkdir -p '$FN_STATE_DIR' \
        source '$REMOTE_TMP/fn-env.sh' >/dev/null; env ) \
      | grep -E '$ENV_FILTER' | LC_ALL=C sort > '$REMOTE_TMP/env.list'"
 
-run_container() {  # $1 = env-file path; runs on the local node
+# VLLM_HOST_IP IS A -e FLAG, NOT AN ENV-FILE LINE, AND IT DIFFERS PER NODE.
+# vLLM's get_ip() (vllm/utils/network_utils.py:34-55) returns VLLM_HOST_IP when
+# it is set and otherwise UDP-probes 8.8.8.8:80 and reads back the local
+# sockname — i.e. it resolves to whatever the DEFAULT ROUTE is. Measured
+# 2026-08-31: the default route on BOTH nodes is `via 10.42.0.1 dev wlp192s0`,
+# so get_ip() returns 10.42.0.2 on the coordinator and 10.42.0.5 on the worker
+# — the HOUSE WIFI, 8.9 ms RTT against 0.10 ms on the fleet.
+#
+# That address is not cosmetic. GroupCoordinator stands up a ZMQ MessageQueue
+# for the TP group unconditionally at world_size > 1 (parallel_state.py
+# :518-521), and its writer binds tcp://get_ip():0 (shm_broadcast.py:522-530)
+# with no connect_ip supplied. Every rank then blocks in wait_until_ready()
+# (:607-638), which is a bare recv() with NO timeout — so an AP roam, a new
+# DHCP lease or client isolation at that instant hangs first light FOREVER,
+# with an empty serve.log, until fn-cluster-up's serve poll below gives up
+# 45 minutes later and reports nothing. Pinning it to the fleet /32s puts the
+# TP control plane on the same interface as everything else in this file.
+#
+# WHY A FLAG AND NOT fn-env.sh, which is where every other knob lives: this
+# value MUST differ per node. Setting it identically — which fn-env.sh would
+# force, since fn-preflight.sh byte-compares that file's output across the
+# pair — makes the worker call bind("tcp://10.99.9.1:0") on a machine where
+# that address does not exist, i.e. ZMQError: Cannot assign requested address.
+# A podman -e flag never enters the byte-diff stream (fn-preflight.sh sources
+# fn-env.sh and greps ITS env, not the container's), so the per-node value
+# cannot fail that gate. Upstream designed for exactly this: VLLM_HOST_IP is
+# in WORKER_SPECIFIC_ENV_VARS (v1/executor/ray_utils.py:33-41), which
+# get_driver_env_vars() excludes from the driver->actor copy
+# (ray_executor_v2.py:361-363), and the vars that ARE copied land via
+# os.environ.setdefault (:153-155) — so the worker's own 10.99.9.2 wins twice
+# over. This supersedes the paragraph at the ray block below, which argued
+# against VLLM_HOST_IP on the assumption it could only be set in fn-env.sh.
+#
+# The flag must stay AFTER --env-file, and does: `man podman-run`, Environment
+# precedence — "--env: Any environment variables specified overrides previous
+# settings", env-files included (verified against podman 5.8.4 on this box). So
+# even an operator shell that leaked VLLM_HOST_IP into the sourced env cannot
+# override the per-node value here; fn-preflight.sh's byte-diff would still
+# flag that leak first, which is the wanted order.
+run_container() {  # $1 = env-file path, $2 = this node's VLLM_HOST_IP
   podman rm -f "$FN_CONTAINER" >/dev/null 2>&1 || true
   podman run -d --name "$FN_CONTAINER" \
     --network host --ipc host \
@@ -229,12 +268,13 @@ run_container() {  # $1 = env-file path; runs on the local node
     -v /var/lib/local-models:/var/lib/local-models:ro \
     -v "$FN_STATE_DIR:$FN_STATE_DIR" \
     --env-file "$1" \
+    -e VLLM_HOST_IP="$2" \
     "$FN_IMAGE" sleep infinity >/dev/null
 }
 
-log "container: coordinator"
-run_container "$LOCAL_ENV_FILE"
-log "container: worker"
+log "container: coordinator (VLLM_HOST_IP=$FN_HEAD_IP)"
+run_container "$LOCAL_ENV_FILE" "$FN_HEAD_IP"
+log "container: worker (VLLM_HOST_IP=$FN_WORKER_HOST)"
 worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true \
   && podman run -d --name '$FN_CONTAINER' \
     --network host --ipc host \
@@ -244,6 +284,7 @@ worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true \
     -v /var/lib/local-models:/var/lib/local-models:ro \
     -v '$FN_STATE_DIR:$FN_STATE_DIR' \
     --env-file '$REMOTE_TMP/env.list' \
+    -e VLLM_HOST_IP='$FN_WORKER_HOST' \
     '$FN_IMAGE' sleep infinity >/dev/null"
 
 # --- 5. ray: distributed head on the coordinator, worker join -----------------
@@ -262,10 +303,18 @@ worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true \
 # fleet network cannot route to. The serve died with
 #   DistStoreError: Timed out after 601 seconds waiting for clients.
 #                   1/2 clients joined
-# Pinning both ends to the fleet /32s keeps the rendezvous on the fleet. This is
-# deliberately NOT done with VLLM_HOST_IP: that is VLLM_-prefixed, so it rides
-# the doctrine env fn-preflight.sh byte-compares, and it must differ per node —
-# setting it would fail the byte-diff by construction.
+# Pinning both ends to the fleet /32s keeps the rendezvous on the fleet.
+# SUPERSEDED NOTE — this paragraph used to end "this is deliberately NOT done
+# with VLLM_HOST_IP: that is VLLM_-prefixed, so it rides the doctrine env
+# fn-preflight.sh byte-compares, and it must differ per node — setting it would
+# fail the byte-diff by construction." That reasoning holds only for setting it
+# in fn-env.sh. It is now set per node as a `podman run -e` flag above, which
+# never enters the byte-diff stream at all; see the long comment there. The two
+# pins are complementary, not alternatives: --node-ip-address fixes what RAY
+# advertises (and hence RayExecutorV2's TCPStore address, taken from
+# bundle_assignments[0]["node_ip"], ray_executor_v2.py:330), while VLLM_HOST_IP
+# fixes what vLLM's own get_ip() returns for the TP MessageQueue bind, which
+# ray never sees.
 log "ray head on the coordinator"
 podman exec "$FN_CONTAINER" ray start --head \
   --node-ip-address "$FN_HEAD_IP" \
