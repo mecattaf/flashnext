@@ -1,0 +1,567 @@
+{
+ "step": "socket-transport",
+ "status": "pass",
+ "ts": "2026-08-31T08:03:04",
+ "data": {
+  "outcome": "ok:5gbe-wire-beats-thunderbolt-rail-at-decode-sizes",
+  "loop": "python",
+  "purpose": "Replaces the INFERRED cell at docs/DECISIONS-2026-08-30.md:168 ('RCCL sockets over thunderbolt0 | ~150-300 us | INFERRED') with a measurement, and clears RDMA Gate 0 (host/rdma/attended-bringup.md), which requires a committed socket-transport benchmark before the A/B may run.",
+  "headline": "At every decode-relevant message size the 5 GbE control wire (enp191s0, 10.99.1.0/30) delivers a LOWER Gloo all-reduce latency than the Thunderbolt tensor rail (thunderbolt0, 10.99.0.0/30) \u2014 by 1.6x to 2.7x. thunderbolt0 wins only bulk single-stream throughput (~1.9x). The transport of record FN_TRANSPORT_RUNG=rail0-sockets is therefore NOT the latency-optimal choice for TP=2 decode and should be re-opened.",
+  "hardware": {
+   "coordinator": "coordinator",
+   "worker": "10.99.9.2",
+   "kernel": "7.2.2",
+   "rails": {
+    "thunderbolt0": {
+     "cable": "A",
+     "subnet": "10.99.0.0/30",
+     "mtu": 1500,
+     "coordinator": "10.99.0.1",
+     "worker": "10.99.0.2",
+     "driver": "thunderbolt_net",
+     "parentdev": "1-2.0",
+     "link_trained_gbps": 40
+    },
+    "enp191s0": {
+     "wire": "5 GbE control",
+     "subnet": "10.99.1.0/30",
+     "mtu": 1500,
+     "coordinator": "10.99.1.1",
+     "worker": "10.99.1.2",
+     "pci": "0000:bf:00.0",
+     "link_gbps": 5
+    }
+   }
+  },
+  "method": {
+   "tools_present": {
+    "iperf3": false,
+    "netperf": false,
+    "sockperf": false,
+    "qperf": false,
+    "note": "none installed on either node; nothing was installed"
+   },
+   "harness": "bench/socket-transport-bench.py (stdlib only), driven by bench/socket-transport-run.py",
+   "allreduce_harness": "bench/gloo-allreduce-bench.py via bench/gloo-allreduce-run.sh",
+   "tcp": {
+    "pattern": "blocking TCP ping-pong on one persistent connection, TCP_NODELAY on both ends",
+    "sizes_b": [
+     64,
+     4096,
+     8192,
+     16384,
+     65536
+    ],
+    "iters_per_size": {
+     "<=16384": 20000,
+     "65536": 5000
+    },
+    "warmup_iters": 1000,
+    "rounds": 2,
+    "round_robin": "rails alternate within each round so drift hits both equally",
+    "percentile": "nearest-rank on the sorted sample vector, no interpolation"
+   },
+   "allreduce": {
+    "backend": "gloo",
+    "world_size": 2,
+    "dtype": "float32",
+    "device": "cpu",
+    "iters_per_size": {
+     "<=16384": 2000,
+     "65536": 500
+    },
+    "warmup_iters": 200,
+    "rounds": 2,
+    "where": "inside the already-running flashnext-pair container (host netns, torch 2.13.0+rocm7.14.0); torch is NOT installed on either host python",
+    "no_serve_started": true
+   },
+   "interface_pinning": {
+    "how": "client binds its source address explicitly, server binds its listen address explicitly; both rails are /30 so the bound address selects the netdev unambiguously",
+    "verified_by": "per-netdev rx/tx packet counters sampled on BOTH nodes around every timed phase; carried below",
+    "caveat": "ssh to the worker (10.99.9.2) routes via 10.99.1.2 dev enp191s0, so the idle control connection shares the physical wire with the enp191s0 baseline. Its traffic during measurement is ~100 packets against ~1.5M, i.e. negligible, and it disadvantages enp191s0 rather than flattering it."
+   }
+  },
+  "tcp_rtt_us": {
+   "thunderbolt0": {
+    "64": {
+     "p50_us": [
+      130.42,
+      130.42
+     ],
+     "p99_us": [
+      207.12,
+      175.78
+     ],
+     "min_us": 34.41,
+     "mean_us": [
+      131.52,
+      131.08
+     ]
+    },
+    "4096": {
+     "p50_us": [
+      130.42,
+      130.42
+     ],
+     "p99_us": [
+      251.59,
+      297.91
+     ],
+     "min_us": 52.14,
+     "mean_us": [
+      132.33,
+      133.9
+     ]
+    },
+    "8192": {
+     "p50_us": [
+      130.44,
+      130.43
+     ],
+     "p99_us": [
+      352.4,
+      338.34
+     ],
+     "min_us": 58.64,
+     "mean_us": [
+      149.87,
+      147.3
+     ]
+    },
+    "16384": {
+     "p50_us": [
+      130.45,
+      130.43
+     ],
+     "p99_us": [
+      314.94,
+      136.78
+     ],
+     "min_us": 96.8,
+     "mean_us": [
+      140.28,
+      130.66
+     ]
+    },
+    "65536": {
+     "p50_us": [
+      324.37,
+      334.48
+     ],
+     "p99_us": [
+      413.3,
+      409.21
+     ],
+     "min_us": 299.96,
+     "mean_us": [
+      329.11,
+      334.68
+     ]
+    }
+   },
+   "enp191s0": {
+    "64": {
+     "p50_us": [
+      56.59,
+      56.59
+     ],
+     "p99_us": [
+      73.22,
+      73.2
+     ],
+     "min_us": 54.72,
+     "mean_us": [
+      57.13,
+      57.17
+     ]
+    },
+    "4096": {
+     "p50_us": [
+      138.13,
+      138.54
+     ],
+     "p99_us": [
+      143.4,
+      144.29
+     ],
+     "min_us": 67.4,
+     "mean_us": [
+      129.68,
+      126.82
+     ]
+    },
+    "8192": {
+     "p50_us": [
+      144.23,
+      144.24
+     ],
+     "p99_us": [
+      151.33,
+      238.05
+     ],
+     "min_us": 98.11,
+     "mean_us": [
+      144.26,
+      151.42
+     ]
+    },
+    "16384": {
+     "p50_us": [
+      134.44,
+      138.19
+     ],
+     "p99_us": [
+      141.69,
+      146.57
+     ],
+     "min_us": 112.75,
+     "mean_us": [
+      135.54,
+      137.81
+     ]
+    },
+    "65536": {
+     "p50_us": [
+      315.97,
+      315.91
+     ],
+     "p99_us": [
+      352.35,
+      352.13
+     ],
+     "min_us": 269.39,
+     "mean_us": [
+      313.37,
+      312.64
+     ]
+    }
+   }
+  },
+  "gloo_allreduce_us": {
+   "enp191s0": {
+    "64": {
+     "p50_us": [
+      224.55,
+      238.17
+     ],
+     "p99_us": [
+      263.38,
+      289.99
+     ],
+     "min_us": 170.14
+    },
+    "4096": {
+     "p50_us": [
+      244.29,
+      233.56
+     ],
+     "p99_us": [
+      373.46,
+      293.88
+     ],
+     "min_us": 181.25
+    },
+    "8192": {
+     "p50_us": [
+      267.21,
+      250.63
+     ],
+     "p99_us": [
+      712.46,
+      295.79
+     ],
+     "min_us": 189.12
+    },
+    "16384": {
+     "p50_us": [
+      258.75,
+      259.84
+     ],
+     "p99_us": [
+      361.93,
+      675.37
+     ],
+     "min_us": 199.78
+    },
+    "65536": {
+     "p50_us": [
+      350.41,
+      355.74
+     ],
+     "p99_us": [
+      456.67,
+      414.39
+     ],
+     "min_us": 269.81
+    }
+   },
+   "thunderbolt0": {
+    "64": {
+     "p50_us": [
+      384.15,
+      375.34
+     ],
+     "p99_us": [
+      649.84,
+      647.29
+     ],
+     "min_us": 232.75
+    },
+    "4096": {
+     "p50_us": [
+      626.28,
+      630.76
+     ],
+     "p99_us": [
+      705.94,
+      747.19
+     ],
+     "min_us": 235.2
+    },
+    "8192": {
+     "p50_us": [
+      521.45,
+      522.83
+     ],
+     "p99_us": [
+      676.45,
+      686.77
+     ],
+     "min_us": 244.79
+    },
+    "16384": {
+     "p50_us": [
+      530.95,
+      524.97
+     ],
+     "p99_us": [
+      724.17,
+      1180.36
+     ],
+     "min_us": 246.59
+    },
+    "65536": {
+     "p50_us": [
+      672.04,
+      655.92
+     ],
+     "p99_us": [
+      748.32,
+      769.3
+     ],
+     "min_us": 382.67
+    }
+   }
+  },
+  "throughput": {
+   "thunderbolt0": {
+    "tx_client_to_server": {
+     "gbps": 8.805,
+     "MiBps": 1049.7,
+     "bytes": 1073741824,
+     "seconds": 0.9755
+    },
+    "rx_server_to_client": {
+     "gbps": 9.204,
+     "MiBps": 1097.2,
+     "bytes": 1073741824,
+     "seconds": 0.9333
+    }
+   },
+   "enp191s0": {
+    "tx_client_to_server": {
+     "gbps": 4.707,
+     "MiBps": 561.1,
+     "bytes": 1073741824,
+     "seconds": 1.8249
+    },
+    "rx_server_to_client": {
+     "gbps": 4.707,
+     "MiBps": 561.1,
+     "bytes": 1073741824,
+     "seconds": 1.825
+    }
+   }
+  },
+  "comparison": [
+   {
+    "size_b": 64,
+    "tcp_rtt_p50_us": {
+     "thunderbolt0": 130.42,
+     "enp191s0": 56.59
+    },
+    "tcp_rtt_p99_us": {
+     "thunderbolt0": 191.45,
+     "enp191s0": 73.21
+    },
+    "gloo_allreduce_p50_us": {
+     "thunderbolt0": 379.75,
+     "enp191s0": 231.36
+    },
+    "gloo_allreduce_p99_us": {
+     "thunderbolt0": 648.57,
+     "enp191s0": 276.69
+    },
+    "tcp_winner": "enp191s0",
+    "tcp_ratio_tb_over_eth": 2.3,
+    "allreduce_winner": "enp191s0",
+    "allreduce_ratio_tb_over_eth": 1.64
+   },
+   {
+    "size_b": 4096,
+    "tcp_rtt_p50_us": {
+     "thunderbolt0": 130.42,
+     "enp191s0": 138.33
+    },
+    "tcp_rtt_p99_us": {
+     "thunderbolt0": 274.75,
+     "enp191s0": 143.84
+    },
+    "gloo_allreduce_p50_us": {
+     "thunderbolt0": 628.52,
+     "enp191s0": 238.93
+    },
+    "gloo_allreduce_p99_us": {
+     "thunderbolt0": 726.57,
+     "enp191s0": 333.67
+    },
+    "tcp_winner": "thunderbolt0",
+    "tcp_ratio_tb_over_eth": 0.94,
+    "allreduce_winner": "enp191s0",
+    "allreduce_ratio_tb_over_eth": 2.63
+   },
+   {
+    "size_b": 8192,
+    "tcp_rtt_p50_us": {
+     "thunderbolt0": 130.44,
+     "enp191s0": 144.24
+    },
+    "tcp_rtt_p99_us": {
+     "thunderbolt0": 345.37,
+     "enp191s0": 194.69
+    },
+    "gloo_allreduce_p50_us": {
+     "thunderbolt0": 522.14,
+     "enp191s0": 258.92
+    },
+    "gloo_allreduce_p99_us": {
+     "thunderbolt0": 681.61,
+     "enp191s0": 504.12
+    },
+    "tcp_winner": "thunderbolt0",
+    "tcp_ratio_tb_over_eth": 0.9,
+    "allreduce_winner": "enp191s0",
+    "allreduce_ratio_tb_over_eth": 2.02
+   },
+   {
+    "size_b": 16384,
+    "tcp_rtt_p50_us": {
+     "thunderbolt0": 130.44,
+     "enp191s0": 136.31
+    },
+    "tcp_rtt_p99_us": {
+     "thunderbolt0": 225.86,
+     "enp191s0": 144.13
+    },
+    "gloo_allreduce_p50_us": {
+     "thunderbolt0": 527.96,
+     "enp191s0": 259.29
+    },
+    "gloo_allreduce_p99_us": {
+     "thunderbolt0": 952.26,
+     "enp191s0": 518.65
+    },
+    "tcp_winner": "thunderbolt0",
+    "tcp_ratio_tb_over_eth": 0.96,
+    "allreduce_winner": "enp191s0",
+    "allreduce_ratio_tb_over_eth": 2.04
+   },
+   {
+    "size_b": 65536,
+    "tcp_rtt_p50_us": {
+     "thunderbolt0": 329.43,
+     "enp191s0": 315.94
+    },
+    "tcp_rtt_p99_us": {
+     "thunderbolt0": 411.25,
+     "enp191s0": 352.24
+    },
+    "gloo_allreduce_p50_us": {
+     "thunderbolt0": 663.98,
+     "enp191s0": 353.08
+    },
+    "gloo_allreduce_p99_us": {
+     "thunderbolt0": 758.81,
+     "enp191s0": 435.53
+    },
+    "tcp_winner": "enp191s0",
+    "tcp_ratio_tb_over_eth": 1.04,
+    "allreduce_winner": "enp191s0",
+    "allreduce_ratio_tb_over_eth": 1.88
+   }
+  ],
+  "findings": [
+   {
+    "id": "tb-fixed-floor",
+    "claim": "thunderbolt0 has a FLAT ~130 us TCP RTT floor that is independent of payload from 64 B through 16 KiB (p50 130.4 us at every one of those sizes, 92-98% of samples in a single 25 us histogram bin), while its minimum observed RTT is 30-34 us.",
+    "reading": "The ~100 us gap between the floor and the minimum is thunderbolt_net / IP-stack wakeup cost, not fabric time-of-flight. The fabric is fast; the netdev path on top of it is not."
+   },
+   {
+    "id": "eth-scales-tb-does-not",
+    "claim": "enp191s0 RTT p50 rises with size as a real wire does (56.6 us at 64 B, 138 us at 4 KiB, 144 us at 8 KiB, 134-138 us at 16 KiB, 316 us at 64 KiB); thunderbolt0 is pinned at its floor until 64 KiB.",
+    "reading": "At 64 B the wire is 2.3x faster. The two cross over around 4-16 KiB where thunderbolt0's flat floor happens to sit just under the wire's rising curve on p50 \u2014 but see tb-tail."
+   },
+   {
+    "id": "tb-tail",
+    "claim": "thunderbolt0 carries a second latency mode near 275-300 us that captures 4-9% of samples at 4-8 KiB, so its p99 is 298-338 us against enp191s0's 144-238 us. On the very first cold sweep of the session that mode captured the MEDIAN at 8 and 16 KiB (p50 300.4 / 304.3 us).",
+    "reading": "thunderbolt0's small-message p50 advantage at 8-16 KiB is 4-10% and is not robust; its tail is decisively worse and is bistable across runs."
+   },
+   {
+    "id": "allreduce-decides-it",
+    "claim": "The Gloo all-reduce \u2014 the shape the decision is actually about \u2014 shows no crossover at all. enp191s0 wins at every size in both rounds: 64 B 225-238 vs 375-384 us, 4 KiB 234-244 vs 626-631 us, 8 KiB 251-267 vs 521-523 us, 16 KiB 259-260 vs 525-531 us, 64 KiB 350-356 vs 656-672 us.",
+    "reading": "Gloo's 2-rank all-reduce costs roughly two round trips, which doubles thunderbolt0's per-RTT penalty and erases the narrow p50 crossover seen in the raw ping-pong. This is the number that should drive the decision."
+   },
+   {
+    "id": "throughput-is-the-only-tb-win",
+    "claim": "thunderbolt0 sustains 8.81 Gb/s TX and 9.20 Gb/s RX on a 1 GiB single-stream transfer (an earlier identical sweep gave 9.19 / 9.36, so call it 8.8-9.4); enp191s0 sustains 4.71 Gb/s in both directions.",
+    "reading": "thunderbolt0 delivers only ~22-23% of the 40 Gb/s the link trains at (20 Gb/s x 2), on a single TCP stream. enp191s0 delivers ~94% of its 5 Gb/s. The rail's ~1.9x bandwidth advantage matters for prefill and for weight/KV movement, not for decode-step all-reduce."
+   },
+   {
+    "id": "memo-baseline-reproduced",
+    "claim": "The memo's TCP-over-5GbE figure of 137.8 us p50 at 4 KiB reproduces as 138.1 and 138.5 us p50 in the two rounds here.",
+    "reading": "Independent confirmation that this harness is measuring the same quantity the memo's 5 GbE cell recorded, so the thunderbolt0 column is directly comparable to it."
+   },
+   {
+    "id": "gloo-ifname-proved",
+    "claim": "With GLOO_SOCKET_IFNAME set explicitly in both ranks, TP=2-shaped Gloo rendezvous and all-reduce succeed over both rails. With it deliberately unset (--no-ifname control), Gloo resolved to loopback and died: 'failed to connect ... local=[127.0.0.1]:49866, remote=[127.0.0.2]:20365 ... SO_ERROR: Connection refused', then 'RuntimeError: Gloo connectFullMesh failed ... timed out connecting'.",
+    "reading": "Independent reproduction of the blocker being repaired on fix/gloo-socket-ifname, and independent proof that setting GLOO_SOCKET_IFNAME is both necessary and sufficient for the rendezvous."
+   }
+  ],
+  "implications": {
+   "transport_of_record": "FN_TRANSPORT_RUNG=rail0-sockets is not justified by latency. For decode-step all-reduce, GLOO_SOCKET_IFNAME=enp191s0 is 1.6-2.7x faster than thunderbolt0 today. A split assignment \u2014 enp191s0 for the latency-bound collective, thunderbolt0 for bulk movement \u2014 is the configuration these numbers point at, and costs nothing to try.",
+   "rdma_gate_0": "Gate 0's committed socket-transport benchmark now exists. The A/B's baseline to beat is enp191s0 at 225-356 us all-reduce, not thunderbolt0 at 375-672 us. Note no RDMA verbs device exists on either node today and NCCL_IB_DISABLE=1 is pinned unconditionally at host/fn-env.sh:152, so Gate 0 is unblocked on evidence but the hardware precondition is still unmet.",
+   "usb4stream": "The ~100 us between thunderbolt0's 130 us RTT floor and its 30-34 us minimum is exactly the IP-stack overhead the raw-DMA stream primitive would bypass. That is a concrete, quantified budget for the docs/USB4STREAM-TRANSPORT.md section 4 trigger criteria: a stream path must land under ~225 us all-reduce-equivalent to beat the 5 GbE wire, and the fabric minimum says that is not obviously out of reach."
+  },
+  "scope_and_safety": {
+   "vllm_serve_started": false,
+   "tally_touched": false,
+   "configfs_written": false,
+   "thunderbolt_device_nodes_opened": false,
+   "cable_b_touched": false,
+   "packages_installed": false,
+   "containers_started_or_stopped": false,
+   "note": "cable B / thunderbolt1 belongs to the concurrent stream bench and was not used here; the only thunderbolt1 counters in the deltas are 2-4 stray multicast packets from the kernel's own 224.0.0.0/4 route."
+  },
+  "commands": [
+   "python3 bench/socket-transport-run.py",
+   "ssh -o BatchMode=yes -o ConnectTimeout=5 10.99.9.2 python3 - --role server --bind 10.99.0.2 --port <p>  (< bench/socket-transport-bench.py)",
+   "python3 bench/socket-transport-bench.py --role client --bind-src 10.99.0.1 --connect 10.99.0.2 --port <p> --sizes 64,4096,8192,16384,65536 --iters 20000 --warmup 1000 --throughput-bytes 1073741824 --label thunderbolt0",
+   "python3 bench/socket-transport-bench.py --role client --bind-src 10.99.1.1 --connect 10.99.1.2 --port <p> --sizes 64,4096,8192,16384,65536 --iters 20000 --warmup 1000 --throughput-bytes 1073741824 --label enp191s0",
+   "bash bench/gloo-allreduce-run.sh thunderbolt0 10.99.0.1 <p> --iters 2000 --warmup 200 --timeout-s 90",
+   "bash bench/gloo-allreduce-run.sh enp191s0 10.99.1.1 <p> --iters 2000 --warmup 200 --timeout-s 90",
+   "bash bench/gloo-allreduce-run.sh thunderbolt0 10.99.0.1 <p> --iters 20 --warmup 5 --sizes 64 --timeout-s 45 --no-ifname   # the failing control"
+  ],
+  "raw": "results/socket-transport-raw.json (full per-size histograms, per-netdev counter deltas from both nodes, both rounds)",
+  "wall_clock_s": 57
+ }
+}
