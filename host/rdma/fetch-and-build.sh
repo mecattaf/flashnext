@@ -90,7 +90,17 @@ LOCAL_SERIES="
 TARGET_KVER="${TARGET_KVER:-7.2.2}"
 KVER="${1:-$(uname -r)}"
 CACHE_DIR="${FLASHNEXT_RDMA_CACHE:-$HOME/.cache/flashnext-rdma-build}"
-STAGE_DIR="${FLASHNEXT_RDMA_STAGE:-$HOME/.local/state/flashnext-rdma}"
+# /var/lib, NOT $HOME (dotfiles#262). The NixOS loader reads this tree at
+# sysinit.target with DefaultDependencies=no, ordered before udev coldplug —
+# earlier than any non-root filesystem's .device unit can exist. Since the
+# coordinator's /home moved onto its own disk (dotfiles#261) a $HOME default
+# is not merely untidy, it is unreachable by construction at the moment it is
+# needed, and the failure is silent: the loader logs a miss and takes the
+# stock fallback, so a "successful" bake here would still leave both twins
+# without ibverbs. The directory is owned by tom on both twins, so this needs
+# no extra privilege. Override with FLASHNEXT_RDMA_STAGE only if the NixOS
+# myFnRdma.stagedDir option is overridden to match.
+STAGE_DIR="${FLASHNEXT_RDMA_STAGE:-/var/lib/flashnext-rdma}"
 WORK="$CACHE_DIR/$KVER"
 OUT="$STAGE_DIR/$KVER/out"
 WESTERI_DIR="$CACHE_DIR/src/westeri-thunderbolt"
