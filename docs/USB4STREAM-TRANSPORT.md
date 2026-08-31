@@ -13,10 +13,9 @@ reads *one* memo and does not re-deliberate. The deliberation record is
 by `bench/usb4stream-bench.py` into `results/receipts/usb4stream.json`.
 
 **One-line answer:** the collective-library net-plugin route is **rejected for
-the latency goal**; the real path is a **2–4 attended-day port of the
-reference doorbell + progress-thread allreduce** from verbs onto the stream
-device's `read`/`write`, and it is built **only if the trigger criteria in §4
-hold**.
+the latency goal**; the real path is a **port of the reference doorbell +
+progress-thread allreduce** from verbs onto the stream device's
+`read`/`write`, and it is built **only if the trigger criteria in §4 hold**.
 
 ---
 
@@ -245,6 +244,66 @@ verifies that disjointness at runtime rather than trusting this paragraph.
 
 Read the resolved paths, hopids and cable label out of the receipt
 (`data.cable`, `data.device`, `data.hopids`), never a remembered number.
+
+## 5b. AMENDMENT 2026-08-31 — first light BANKED, on cable B, at PM QoS 100 µs
+
+The receipt §4(1) waits on exists: `results/receipts/usb4stream.json`,
+`outcome: ok`, 2026-08-31T14:37:40, cable B, `fn0` both ends (hopids 10/10
+under the #276 pin), ring 1024, throttling 2048. **Power regime recorded in
+the receipt: `/dev/cpu_dma_latency` read 100 µs on both nodes before and
+after the run** — the retired 14.3 µs figure died for not naming its regime;
+this one names it.
+
+| metric | p50 µs | p99 µs |
+|---|---|---|
+| RTT 64 B | 16.19 | 24.86 |
+| RTT 4 KiB | 24.73 | 36.95 |
+| RTT 16 KiB | 49.78 | 55.36 |
+| RTT 64 KiB | 141.61 | 157.15 |
+| exchange 8 KiB | **13.67** | 23.13 |
+| exchange 16 KiB | **20.06** | 25.59 |
+| exchange 64 KiB | 58.47 | 68.88 |
+
+Throughput: 1248 MB/s coordinator→peer, 1153 MB/s peer→coordinator
+(ring 1024; §1's ~841 MB/s expectation was set at ring 4096).
+
+**Trigger criterion §4(1) HOLDS**, with margin: exchange p50 at 8 and 16 KiB
+is 13.67 and 20.06 µs against the ~40 µs bar, and the p99s are tight (23.1,
+25.6). Criteria (2) allreduce-dominance and (3) the RDMA A/B remain open —
+this amendment resolves (1) and only (1).
+
+Against the same-day TCP-over-`rail0` baseline (PM QoS 100 µs, post-rename,
+3000 iterations: 64 B p50 130.47 µs, 4 KiB p50 130.51 µs, 16 KiB p50
+259.33 µs), the stream RTT wins **8.1× at 64 B, 5.3× at 4 KiB, 5.2× at
+16 KiB** — and the stream's p50s sit *below TCP's own minima* (81.80 / 50.97 /
+105.94 µs). The ~100 µs flat p50 TCP shows across a 64× payload range is
+software cost in `thunderbolt_net`'s path, and bypassing the IP stack removes
+it, as hypothesized.
+
+Two constraints learned on the way to the number, both decision-relevant for
+the §3 port:
+
+1. **Exactly ONE stream may be open per NHI while that cable's
+   `thunderbolt_net` netdev is up.** The two ENOMEM aborts (receipts
+   `usb4stream.aborted-enomem-0927/0943.json`) were never a memory problem:
+   the driver launders every ring-allocation failure into `-ENOMEM`, and the
+   dominant real cause is NHI ring-slot exhaustion — these NHIs have
+   `hop_count = 3`, hop 0 is the control channel, hop 1 is
+   `thunderbolt_net`'s while the netdev is up, leaving hop 2 as the single
+   stream slot. Verified live: with `fn0` held open, opening `fn1` fails
+   ENOMEM at any ring_size while the kernel logs `invalid hop: -1`;
+   `ring_size` is irrelevant to this. Consequence: §1's "a high-rate
+   bidirectional transport wants `fn0`/`fn1` as a unidirectional pair" is
+   **not buildable on a cable that keeps its netdev** — a two-stream design
+   needs both cables (one stream each), or the cable's netdev taken down to
+   free hop 1, which is untested and re-enters the #262 claim-window hazard.
+2. **Frames written before the peer's open are silently dropped, not
+   queued.** The first `ok` run required an open barrier in the bench (peer
+   opens first and announces; the coordinator opens only after reading the
+   announcement — see `wait_peer_open`). Receipt
+   `usb4stream.aborted-etimedout-1433.json` is the deadlock that found it.
+   Any transport built on this device must order its opens explicitly; it
+   cannot assume the wire buffers pre-open writes.
 
 ## 6. Drafted, NOT filed — issue body for the port
 

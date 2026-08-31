@@ -1,7 +1,7 @@
 {
  "step": "usb4stream",
  "status": "pass",
- "ts": "2026-08-31T09:43:45",
+ "ts": "2026-08-31T14:37:40",
  "data": {
   "serve_up": false,
   "loop": "python",
@@ -25,48 +25,109 @@
    "throughput_bytes_each_direction": 268435456
   },
   "device": {
-   "coordinator": "/dev/tbstream1",
-   "peer": "/dev/tbstream1"
+   "coordinator": "/dev/tbstream2",
+   "peer": "/dev/tbstream2"
   },
   "open_count": {
-   "coordinator": 0,
-   "peer": 0
+   "coordinator": 1,
+   "peer": 1
   },
   "rail": {
-   "dev": "thunderbolt1",
-   "addr": "169.254.17.133",
-   "peer": "169.254.53.173",
+   "dev": "rail2",
+   "addr": "10.99.2.1",
+   "peer": "10.99.2.2",
    "cable": "B"
   },
   "peer_reachable": {
-   "netdev": "thunderbolt1",
-   "peer": "169.254.53.173",
+   "netdev": "rail2",
+   "peer": "10.99.2.2",
    "reachable": true,
    "ping": true,
    "neigh_lladdr": "02:4e:e0:7d:e4:e9",
-   "neigh_state": "REACHABLE"
+   "neigh_state": "DELAY"
   },
   "configfs": {
-   "coordinator": "/sys/kernel/config/thunderbolt/stream/0-2.1/fn1",
-   "peer": "/sys/kernel/config/thunderbolt/stream/1-2.1/fn1"
+   "coordinator": "/sys/kernel/config/thunderbolt/stream/0-2.1/fn0",
+   "peer": "/sys/kernel/config/thunderbolt/stream/1-2.1/fn0"
   },
   "ring_size": "1024",
   "throttling": "2048",
   "hopids": {
    "coordinator": {
     "in": "10",
-    "out": "9"
+    "out": "10"
    },
    "peer": {
-    "in": "9",
+    "in": "10",
     "out": "10"
    }
   },
   "peer_ring_size": "1024",
   "peer_throttling": "2048",
-  "error": "OSError: [Errno 12] Cannot allocate memory: '/dev/tbstream1'",
-  "wall_s": 0.001,
-  "peer_report": {},
-  "outcome": "aborted:open:ENOMEM"
+  "rtt_us": {
+   "64": {
+    "p50": 16.191,
+    "p99": 24.857,
+    "iters": 500
+   },
+   "4096": {
+    "p50": 24.726,
+    "p99": 36.949,
+    "iters": 500
+   },
+   "16384": {
+    "p50": 49.784,
+    "p99": 55.364,
+    "iters": 500
+   },
+   "65536": {
+    "p50": 141.606,
+    "p99": 157.146,
+    "iters": 500
+   }
+  },
+  "exchange_us": {
+   "8192": {
+    "p50": 13.666,
+    "p99": 23.133,
+    "iters": 500
+   },
+   "16384": {
+    "p50": 20.058,
+    "p99": 25.588,
+    "iters": 500
+   },
+   "65536": {
+    "p50": 58.47,
+    "p99": 68.879,
+    "iters": 500
+   }
+  },
+  "throughput_mb_s": {
+   "coordinator_to_peer": 1248.3,
+   "peer_to_coordinator": 1153.2
+  },
+  "wall_s": 1.465,
+  "peer_report": {
+   "role": "peer",
+   "outcome": "ok",
+   "open_count": 1,
+   "dev": "/dev/tbstream2",
+   "cable": "B",
+   "function": "fn0",
+   "ring_size": "1024",
+   "throttling": "2048",
+   "in_hopid": "10",
+   "out_hopid": "10",
+   "resolved_dev": "/dev/tbstream2"
+  },
+  "outcome": "ok",
+  "pm_qos": {
+   "cpu_dma_latency_us": {
+    "coordinator": 100,
+    "worker": 100
+   },
+   "note": "read from /dev/cpu_dma_latency on both nodes immediately before provisioning and again after the run, by the operator; recorded so this figure, unlike the retired 14.3 us one, names its power regime"
+  }
  }
 }

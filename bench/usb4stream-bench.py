@@ -72,6 +72,12 @@ Hence, and none of these are style choices:
   wire peer, never by the device index, which is coincidentally equal on both
   nodes for a given cable and so proves nothing. Disagreement is a typed skip
   and exit 0, with nothing opened.
+* **The peer opens FIRST, and the coordinator waits for proof.** A DATA
+  frame written before the far end's open has enabled its router paths is
+  silently dropped, not queued (measured 2026-08-31; receipt
+  ``usb4stream.aborted-etimedout-1433.json`` is the deadlock that found it).
+  The peer announces its completed open with a marker line; the coordinator
+  reads it before touching its own device. See ``wait_peer_open``.
 * **Exactly one open attempt per side, ever**, blocking, under a 30 s alarm.
   Any failure after that point: close what is open, kill the ssh child, write
   the receipt, exit. Never reopen, never retry.
@@ -213,6 +219,15 @@ THROUGHPUT_BYTES = 256 * 1024 * 1024
 THROUGHPUT_CHUNK = 1024 * 1024
 HANDSHAKE_BYTES = 64
 HANDSHAKE_MAGIC = b"FLASHNEXT-USB4STREAM-FIRST-LIGHT"
+
+# The open barrier's line: the peer prints this AFTER its own open succeeds,
+# and the coordinator opens NOTHING until it has read it. Measured 2026-08-31
+# (receipt usb4stream.aborted-etimedout-1433.json): a frame written before the
+# peer's open has enabled its router paths is silently dropped — not flow-
+# controlled, not queued — so a handshake sent into the launch gap deadlocks
+# both ends until the global alarm. The barrier removes the gap by ordering
+# the two opens, not by sleeping and hoping.
+PEER_OPEN_MARKER = "USB4STREAM-PEER-OPEN"
 
 OPEN_ALARM_S = 30
 GLOBAL_TIMEOUT_S = 240
@@ -1065,6 +1080,11 @@ def run_peer(dev: str | None, cable: str,
         set_phase("open")
         fd = open_stream_once(dev)
         report["open_count"] = open_count()
+        # The open barrier: tell the coordinator our paths exist BEFORE it
+        # opens and writes. Anything it sends earlier is dropped on the wire
+        # (see PEER_OPEN_MARKER). Not JSON on purpose: kill_peer() scans for
+        # lines that start with '{' and must never mistake this for a report.
+        print(PEER_OPEN_MARKER, flush=True)
         signal.alarm(GLOBAL_TIMEOUT_S)
         peer_schedule(fd, payload_buffer())
     except BaseException as exc:                     # noqa: BLE001 — typed below
@@ -1100,8 +1120,55 @@ def launch_peer(source: bytes, dev: str, cable: str,
     return proc
 
 
+def wait_peer_open(proc: subprocess.Popen) -> None:
+    """THE OPEN BARRIER. Block until the peer reports its device is open.
+
+    Why this exists, measured 2026-08-31 on cable B (receipt
+    ``usb4stream.aborted-etimedout-1433.json``): the coordinator used to open
+    and write its handshake milliseconds after ``launch_peer``, while the
+    peer needs seconds of ssh + interpreter + resolution before ITS open
+    enables its router paths. A DATA frame sent into that gap is silently
+    dropped — verified both ways with the launch mechanics of this file: a
+    peer opened 4 s BEFORE the coordinator handshakes clean, a coordinator
+    write 2 s before the peer's open loses the frame and both ends block
+    until their alarms. So the barrier orders the two opens; it does not
+    sleep and hope.
+
+    The peer prints ``PEER_OPEN_MARKER`` immediately after its successful
+    open. Reading it here therefore proves the peer's paths exist before the
+    coordinator touches its own device. If the peer instead aborts, its JSON
+    report arrives where the marker should be: stash any such lines on the
+    Popen object for ``kill_peer`` (whose pipe read cannot see what we have
+    already consumed) and fail the barrier with the peer's exit as evidence.
+    The wait runs under the same ``OPEN_ALARM_S`` budget as an open, because
+    that is what it is: the other half of one.
+    """
+    consumed: list = []
+    proc.consumed_output = consumed          # read back by kill_peer()
+    assert proc.stdout is not None
+    signal.alarm(OPEN_ALARM_S)
+    try:
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                raise OSError(errno.EPIPE,
+                              "peer exited before opening its device")
+            text = line.decode(errors="replace").strip()
+            if text == PEER_OPEN_MARKER:
+                return
+            if text:
+                consumed.append(text)
+    finally:
+        signal.alarm(0)
+
+
 def kill_peer(proc: subprocess.Popen | None) -> dict:
-    """Reap the ssh child and read whatever JSON it managed to print."""
+    """Reap the ssh child and read whatever JSON it managed to print.
+
+    Lines the open barrier consumed off the pipe are checked too — when the
+    peer aborts AT its open, its report is exactly what the barrier read in
+    place of the marker.
+    """
     if proc is None:
         return {}
     try:
@@ -1112,7 +1179,9 @@ def kill_peer(proc: subprocess.Popen | None) -> dict:
             out, _err = proc.communicate(timeout=10)
         except subprocess.TimeoutExpired:
             return {}
-    for line in reversed(out.decode(errors="replace").splitlines()):
+    lines = out.decode(errors="replace").splitlines()
+    lines = list(getattr(proc, "consumed_output", [])) + lines
+    for line in reversed(lines):
         line = line.strip()
         if line.startswith("{"):
             try:
@@ -1269,6 +1338,12 @@ def run_coordinator(source: bytes, cable: str = DEFAULT_CABLE,
     started = time.perf_counter()
     try:
         proc = launch_peer(source, probe["dev"], cable, function)
+        # THE OPEN BARRIER — the peer's open must complete before ours, or
+        # the handshake frame is dropped into the launch gap and both ends
+        # deadlock (see wait_peer_open). An abort here has opened nothing
+        # locally and is typed as its own phase.
+        set_phase("peer-open-barrier")
+        wait_peer_open(proc)
         set_phase("open")
         fd = open_stream_once(local["dev"])
         base["open_count"]["coordinator"] = open_count()
