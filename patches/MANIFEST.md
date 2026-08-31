@@ -2,7 +2,7 @@
 
 Base: `8e4e036a311604800334989485b4ee23925956da` (head of upstream PR #54129,
 `Trosfy:ple-mmap-upstream`, which carries the full #53896 model support).
-Branch head mirrored here: `bdb6f0420e797de9266de593326368091085cc3b` — 12
+Branch head mirrored here: `a05fa983fb4699dc1dc704776e3fed014c215cc7` — 13
 commits, one `.patch` each, numbered in apply order. `scripts/verify-fork.sh`
 enforces `n_patches >= n_commits` against the live branch.
 
@@ -64,11 +64,41 @@ Delta grammar: `+N` (no deletions), `+N/-M`, or `new (LINES)`.
 | `vllm/models/qwen4_exp/amd/model.py` | +14/-3 | The two 5-line `build_tables` blocks after each `load_weights` + imports. `diff` against `nvidia/model.py` is now **empty**. |
 | `tests/models/qwen4_exp/test_ple_mmap_amd.py` | new (352) | GPU-free pins on every site above: same-module identity, `_hash_ngram_ids` name, env-on/off constructor swap, both cudagraph guards firing from the AMD constructor, scale-keep/shard-drop loading, FP8 method selection, output-buffer dtype, dequant round-trip and the fail-closed no-scale raise. |
 
+## ROCm 7.14 overlapping host registration on the engram path (patch 0013)
+
+Measured, not inherited. RUN3-BRIEF §16.1: ds4's `rocm_host_copy_probe`, run in
+`flashnext:dev` on this coordinator 2026-08-31, passes **only** in
+`--expect-overlap-rejected` mode — `adjacent-malloc range=1 host_register=part
+or all of the requested memory range is already mapped`, then `adjacent-malloc
+range=1 h2d_copy=invalid argument`. Both halves reproduced again in-process
+while writing the commit (register code 712, then `hipErrorInvalidValue` on a
+plain H2D out of the rejected pointer). §15.1: the registration is page-rounded,
+so two logically *disjoint* slices of one mmap collide once their rounded spans
+share a page — with a ~51.2 GB engram table sliced on non-page boundaries that
+is the common case. It is a model-**load** issue: a load failure or a silent
+fallback, never slow decode.
+
+| file | Δ | purpose |
+|---|---|---|
+| `vllm/models/qwen4_exp/common/ple_mmap.py` | +364/-7 | The port, by shape not by copy, of ds4-strix-halo-tp-odinlink `rocm/ds4_rocm_runtime.cuh:5513-5600` (`cuda_model_range_ptr`, commit 8d45d16). `page_rounded_span()` keeps ds4's `:5518-5523` arithmetic because the *rounding* is what manufactures the collision; `mapping_span()` is the mitigation §16.1 points at (`page-aligned-register` and `anonymous-mmap-register` both pass cleanly) — `np.memmap` already maps from a page-aligned start covering exactly the pages the array needs, so registering that extent is the same pages with none of the rounding and cannot pull a neighbour's page in. `MmapPleTable.host_register()` is **never fatal**: a rejected span is the expected 7.14 outcome, so it latches `overlapping`, says why, and the load continues. `to_device()` carries the half that is easy to miss — after a rejected registration the *plain* copy fails too, and it does not need this table to have registered anything, so an unlatched table tries the plain copy and latches on exactly that failure (anything else re-raises). `staged_copy_to_device()` is ds4's `:5566` loop and preserves its three load-bearing properties: the pinned bounce is allocated **only** on the overlap path so the ordinary path pays nothing, it is **capped at 64 MiB** whatever the tensor size so the extra RSS is bounded, and it is freed on success **and on every error exit** (`resize_(0)`, so the block is gone at that statement, not at the caching allocator's convenience). `_latch_mapping_unsupported()` guards ds4's second, silent failure mode at `:5548` — `cudaErrorNotSupported`/`cudaErrorInvalidValue` disables host mapping for the *whole process*, permanently, and upstream says nothing; here it logs at **error** level with the word `LATCHED`, because a warning is invisible in a load's log volume. `close()` unregisters every span before dropping the memmaps those addresses live in. |
+| `vllm/envs.py` (0013) | +8 | `VLLM_PLE_MMAP_REGISTER` (default **0**). The registration is the new mechanism and stays opt-in — the quality bar is a kill switch per mechanism. The staged-copy fallback has no switch by design: a page-adjacent registration *anywhere* in the process poisons copies out of these pages, so the fallback must be armed whether or not we registered anything. Listed in `ignored_factors`: it changes load-time host registration, never the compiled graph. |
+| `tests/models/qwen4_exp/test_ple_mmap_host_registration.py` | new (569) | GPU-free pins, `cudart` and the pinned allocator stood in so every real error code is drivable: the rounding arithmetic and §15.1's collision claim as an executable assertion, the alignment mitigation (two shards' mapping spans never overlap), rejection-is-survivable with the loop continuing past it, the process-wide latch plus its loud log, the bounce's overlap-only allocation / 64 MiB cap / free on both the success and the error exit, the poisoned-copy latch and its retry, the no-swallow path for unrelated `RuntimeError`s, and the knob's default-off. |
+
+Ran on hardware, in `flashnext:dev` on gfx1151 (HIP 7.14.60850, torch
+2.13.0+rocm7.14.0): 30 new tests pass; `test_ple_mmap.py` (82),
+`test_ple_mmap_amd.py` (15) and `test_ple.py` (11) still pass; ruff check +
+format clean; `tools/check_nix_substrate.py` passes. On the real device a
+synthetic table registers its 4 shard mappings with **zero** collisions (the
+alignment mitigation working), a deliberate colliding re-registration of one of
+those spans returns 712, and the staged copy returns byte-exact rows.
+
 ## Not yet executed anywhere
 
-No engineer box had torch; every `.py` passed `py_compile` + repo-config ruff
-(check + format) and the C++ was reviewed, but **zero pytest ran and nothing
-compiled for HIP**. First-hardware checklist: `_GCN_ARCH` one-liner, the
+Patches 0001–0012. No engineer box had torch when they were written; every
+`.py` passed `py_compile` + repo-config ruff (check + format) and the C++ was
+reviewed, but **zero pytest ran and nothing compiled for HIP**. Patch 0013 is
+the first to land with its tests actually run (see above), against the
+`flashnext:dev` image built from `bdb6f04`. First-hardware checklist: `_GCN_ARCH` one-liner, the
 `float8_e4m3fn → bfloat16` cast probe, `pytest` on the four new test files +
 `test_ple_mmap.py`, one tiny-shape MoE forward (LDS risk R1: default ROCm
 config stages 2×32 KiB bf16 B-tiles = the whole gfx1151 LDS — a tuned
