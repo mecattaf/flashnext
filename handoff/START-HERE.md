@@ -230,3 +230,44 @@ Anything present there and absent here without a stated reason is a candidate fo
 failure mode, and nothing in this repo would surface the next one.
 
 This is the highest-value preventive work available and it costs an afternoon of reading.
+
+---
+
+## 7. ADDENDUM 2026-08-31 12:25 — the NixOS side is DONE; read this before §1–§4
+
+The dotfiles work this doc waits on has landed, deployed to both twins, and the fleet is
+mid-reboot-cycle (worker rebooted and verified 12:16; coordinator reboot is the last act of
+that session). What changed relative to the expectations written above:
+
+- **dotfiles #267, #273, #274, #275, #276, #277, #278, #279, #280 are CLOSED** with evidence;
+  #270 got the arbitration half (flashnext-lane.target, see below) and stays open for the
+  peers-based gateway design; #266 stays open with the residual exposure documented.
+- **§1's outcome table: expect outcome (a), and BETTER hopids than this doc predicted.** Cable B
+  unprovisioned is confirmed (the sweep released its groups, including the hop-8 fn0, on both
+  twins). Cable A's groups are PINNED now: fn0 = 10/10, fn1 = 11/11 on both ends, interlocked,
+  verified 12:22. Not 9/9 — the provisioner pins hopids at 10+N so hop 8 is structurally
+  unreachable and 9 is headroom. `/var/lib/usb4-stream/rail-identity` on each twin records the
+  anchor (nhi + peer_uid) and the hopids.
+- **§2's bench on cable B: do NOT hand-provision configfs.** Run `sudo usb4-stream-bench-cable`
+  on BOTH twins first — it provisions cable B by NHI (never by name), applies the same 10+N pin,
+  and arms the keep-foreign marker so the provisioner's sweep cannot delete your groups
+  mid-campaign. `sudo usb4-stream-bench-cable --release` on both when done. Cable B fn0 is safe
+  now (no hop-8), but fn1 remains the conservative choice.
+- **`GLOO_SOCKET_IFNAME` is now redundant, not wrong** (§4): both twins resolve their own and
+  each other's hostnames to 10.99.9.x (verified live with getent, plus across the worker's
+  reboot). The two-rank Gloo run without any pin is the acceptance test dotfiles#273 names.
+  Retire the pin when convenient; the %%,* trim note still applies while it exists.
+- **thunderbolt1 has its /30**: 10.99.2.1/2 live, 0.12 ms, TCP door open (HTTP through
+  10.99.2.2:12345 verified). The comma-list hang state is gone; the aggregation experiment is
+  unblocked. The profile (tb-fleet2) is pinned to the physical NHI via NM match.path — a
+  probe-order flip parks it loudly instead of crossing the cables.
+- **Before a TP=2 run**: `systemctl start flashnext-lane.target` on BOTH twins (it stops
+  llama-swap via mutual Conflicts — tested live in both directions); run ranks as transient
+  units with `BindsTo=flashnext-lane.target`. `fn-cluster-up.sh/down.sh` should adopt this and
+  DROP the swap-arbitration.json arrival-restore — teardown no longer restarts llama-swap;
+  it returns on boot or explicit start (a chosen decision, recorded in
+  dotfiles modules/flashnext-lane.nix). This repo's script changes are the remaining half of
+  dotfiles#270.
+- **§3 unchanged**: RDMA still needs the one attended bake per node; the miss is now loud at
+  every boot (`journalctl -b -p warning -g fn-rdma`) and `/run/fn-rdma-stock-fallback` is the
+  greppable negative.
