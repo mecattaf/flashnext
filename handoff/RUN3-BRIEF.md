@@ -1,3 +1,25 @@
+> ## ⚠ CORRECTIONS 2026-08-31 (post-dotfiles) — READ BEFORE ANY SECTION BELOW
+>
+> Four things this brief asserts throughout were falsified the same day. They are
+> struck at each site, but read them once here:
+>
+> 1. **The netdevs are `rail0` and `rail2`** (dotfiles#266), cable-bound by
+>    `.link Name=`. `thunderbolt0`/`thunderbolt1` no longer exist. Where they
+>    appear below they are either struck, or they name a past event.
+> 2. **Rail 2 already has its /30** (10.99.2.x, dotfiles#274). Every "free win:
+>    give thunderbolt1 a static /30 and pin NCCL_SOCKET_IFNAME=thunderbolt0"
+>    step is DONE, and executing it literally would pin a nonexistent interface.
+> 3. **Every transport number in §6.2, §13.2, §14.1 and §16.7 was measured at
+>    PM QoS = 0**, cores never idling. The fleet default is now
+>    `pmqosLatencyUs = 100` (dotfiles#257). Do not compare any new measurement
+>    to those figures without re-taking them.
+> 4. **§13.4's "hard 130 µs floor" is real and reproduces** (re-measured at
+>    PM QoS 100: 64 B p50 130.47, 4 KiB 130.51) — but it is `thunderbolt_net`
+>    software cost, not fabric: the same link's own minimum is 50.97 µs, and
+>    USB4STREAM on the same cable does 8 KiB exchange in 13.67 µs
+>    (`results/receipts/usb4stream.json`). Do not conclude "the 5 GbE wire is
+>    the better transport" from it — see `docs/USB4STREAM-TRANSPORT.md` §5b/§5c.
+
 # RUN-3 BRIEF — consolidated state, intel, and plan
 
 Written 2026-08-30 (late evening), before arming the third campaign.
@@ -102,7 +124,7 @@ Delete with `git push origin :refs/tally/.../summary/quiescent` (consider all fo
 
 ### 1.4 The physical blocker is gone
 
-The pair is up. `ssh 10.99.9.2` answers as `worker`; thunderbolt0 and enp191s0 carry
+The pair is up. `ssh 10.99.9.2` answers as `worker`; rail0 and enp191s0 carry
 their fleet addresses. The whole `cp-tp2 → cp-bench → cp-close` chain is physically
 runnable. **Verify again immediately before arming** — this is exactly what failed at
 13:57Z on 2026-08-30.
@@ -418,7 +440,7 @@ unconditionally; `:142` defaults `FN_TRANSPORT_RUNG=rail0-sockets`.
 
 | path | 4 KiB | 8–16 KiB |
 |---|---|---|
-| TCP over `thunderbolt0` | **130 µs p50** | **310–315 µs** |
+| TCP over `rail0` (PM QoS 0 — superseded, see banner) | **130 µs p50** | **310–315 µs** |
 | 5 GbE `enp191s0` ("terminal fallback") | *better at every size* | |
 
 **Our fast wire is ~2× worse than the wire we call the fallback.**
@@ -970,8 +992,10 @@ doorbell all-reduce and the stream bench run on a cable sharing **no NHI, no rin
 IRQ vectors** with the serving pair. The stream measurement becomes schedulable *while
 serving*, instead of only after everything stops.
 
-Second free win: give thunderbolt1 a static /30 + firewall trust and pin
-`NCCL_SOCKET_IFNAME=thunderbolt0`. Image ship goes to **1134 vs 589 MB/s** (measured)
+~~Second free win: give thunderbolt1 a static /30 + firewall trust and pin
+`NCCL_SOCKET_IFNAME=thunderbolt0`.~~ **DONE 2026-08-31** (dotfiles#274 gave
+rail2 its /30; #266 renamed both). Pin `rail0`, or `rail0,rail2` deliberately.
+Executing this as written would pin a nonexistent interface. Image ship goes to **1134 vs 589 MB/s** (measured)
 and Ray traffic stops confounding the collective wire.
 
 ### 13.6 THE STAGING TRAP — two rules the port must be written with, first time
@@ -1044,7 +1068,7 @@ growth hazard (59.1 MiB per 0.49 MiB of rows today; 12.3 with MADV_RANDOM alone)
    nothing, unblocks everything.
 2. **Build + insmod the ~70-line NHI ITR module** (`ns=2048`) on both nodes; re-run the
    RTT sweep (`scratchpad/pp.py`). **Before first light.** No unload required. (§13.4)
-3. **Static /30 + firewall trust on thunderbolt1; pin `NCCL_SOCKET_IFNAME=thunderbolt0`.**
+3. ~~**Static /30 + firewall trust on thunderbolt1; pin `NCCL_SOCKET_IFNAME=thunderbolt0`.**~~ **DONE** (dotfiles#274/#266) — rails are `rail0`/`rail2`, both addressed.
    (§13.5)
 4. **Re-point Track B at cable B** (`/dev/tbstream0` both nodes) and add a cable-B mode
    to `resolve_stream_device()`; fix the two stale docstring premises. (§13.5)
@@ -1412,7 +1436,7 @@ LEAST HALF of the measured wire time without transport fallback."*
    assert parity; distinct per-rank checksums.
 4. **NHI ITR module** (`ns=2048`), then re-run the RTT sweep (§13.4). Still valid, still
    on Track A's baseline, no unload required.
-5. **Static /30 + firewall trust on thunderbolt1**; pin `NCCL_SOCKET_IFNAME=thunderbolt0`
+5. ~~**Static /30 + firewall trust on thunderbolt1**; pin `NCCL_SOCKET_IFNAME=thunderbolt0`~~ **DONE** (dotfiles#274/#266)
    (§13.5).
 6. **If Track B proceeds:** host-callback-ordered gate, **not** a GPU doorbell (§14.2);
    pinned+mapped buffer with the producer writing into it (§14.3); the eight invariants
@@ -1929,7 +1953,7 @@ by the command shown.
 - **Pair reachability confirmed** at prep time: `10.99.0.2` answers at 0.149 ms avg;
   `ssh 10.99.9.2` answers as `worker`. **Re-verify immediately before arming** — losing
   this at 13:57Z is what ended run 2.
-- **thunderbolt1 is still unconfigured** — `169.254.17.133/16` on the coordinator,
+- ~~**thunderbolt1 is still unconfigured**~~ **RESOLVED 2026-08-31 (dotfiles#274):** rail2 carries 10.99.2.x/30 on both twins. The text below describes the pre-fix state — `169.254.17.133/16` on the coordinator,
   `169.254.53.173/16` on the worker, both link-local, no /30. §13.5's free win
   (static /30 + firewall trust, `NCCL_SOCKET_IFNAME=thunderbolt0` pinned) is **not done**;
   it is a host network change, out of the repo's scope.

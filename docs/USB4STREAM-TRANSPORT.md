@@ -305,6 +305,66 @@ the §3 port:
    Any transport built on this device must order its opens explicitly; it
    cannot assume the wire buffers pre-open writes.
 
+## 5c. What the one-stream-per-NHI limit does to the §3 port — and the C-state answer
+
+§5b's constraint 1 kills a design §1 and §3 assume. §1 records that *"read and
+write serialize on one per-device mutex, so a high-rate bidirectional transport
+wants `fn0`/`fn1` as a unidirectional pair."* **That pairing is impossible on one
+cable while its IP rail is up** — the NHI has three ring-hop slots, the control
+channel holds one, `thunderbolt_net` holds the second, and the stream gets the
+third. Two opens on one NHI return ENOMEM at every ring size tested, including 32.
+
+Three routes out, in the order they should be considered:
+
+1. **One bidirectional stream, and check whether the mutex ever contends.**
+   This is what §5b measured, and it already delivers the 8.1×/5.3× win. The
+   mutex is held for the *copy*, not the wire transit — sub-µs against a 24.7 µs
+   4 KiB round trip — and if the progress thread does write-then-read
+   sequentially it is never contended at all. **Do this first.** The split below
+   optimizes a bottleneck nobody has demonstrated.
+
+2. **Split directions across cables** — write on cable A's stream, read on
+   cable B's, mirrored between ranks. Two devices, two mutexes, no
+   serialization; it is the §1 pairing rehomed onto hardware that can host it,
+   and it fits an all-reduce's symmetric simultaneous shape well. Cable parity
+   makes it free: both train 20 Gb/s × 2 lanes and ping within 1 µs, so a round
+   trip crossing two different cables costs nothing.
+   **The cost is availability, and it is easy to undersell.** Today the two
+   cables are independent — one wedges, the other is a spare. Splitting welds
+   them into ONE transport with TWO single points of failure: lose either and
+   both directions die. It also spends cable B permanently, and cable B being
+   free is the only reason the ENOMEM above was diagnosable at all (dynamic
+   debug, forced open/close cycling, ring-size sweeps — none of which may touch
+   a serving cable). And it reintroduces per-host asymmetric configuration,
+   the exact class that produced dotfiles#267.
+   **Verdict: a contingency, not the default.** Take it only if (1) measures
+   real mutex contention.
+
+3. **Free hop 1 by taking a cable's `thunderbolt_net` down**, giving two streams
+   on one cable. UNTESTED, and it re-enters the tbnet hopid claim window that
+   dotfiles#262 documents as wedge-prone. Concentrates both streams on one
+   cable's bandwidth for no gain over (2). Not recommended.
+
+**The C-state question §5b's regime line raises, answered.** Holding PM QoS at
+100 µs permits C2, whose 18 µs exit latency *exceeds* the entire 16.19 µs 64 B
+stream RTT — which looked like it should have swamped the measurement. It did
+not: 16.19 µs at budget 100 against 14.3 µs at budget 0. The reason is that the
+penalty only appears once a path idles long enough to reach C2. Measured on
+rail0 ICMP the same day, mean RTT by inter-message gap: 2 ms → 0.087 ms,
+5 ms → 0.112, 10 ms → 0.143, 50 ms → 0.150, with the *minimum* flat at ~0.08 ms
+throughout — the floor never moves, only the share of samples paying a wake.
+A tight exchange never idles that long.
+
+Consequence for the port: **a progress thread that spins pays nothing, and one
+that blocks pays only if gaps exceed a few ms.** Decode gates are ~1069 µs
+apart (§14.1), inside the free region. So `pmqosLatencyUs = 100` is the right
+fleet default for this transport — the ~60 W/box the POLL floor cost buys
+nothing here. Pinning and spinning the progress thread is available via
+`sched_setaffinity` without any kernel parameter; `isolcpus` is NOT indicated,
+because the APU shares a package power budget and §14.1 puts own-GPU-compute at
+~88% of the gate against exchange's ~11% — trading GPU boost to save a C-state
+exit on the 11% component is a wash at best.
+
 ## 6. Drafted, NOT filed — issue body for the port
 
 > **Title:** Port the doorbell + progress-thread allreduce from verbs onto the

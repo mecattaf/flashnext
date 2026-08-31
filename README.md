@@ -375,7 +375,7 @@ Even before round-2 benchmarks land, these are settled from source or
 measurement (file:line pins in the [evidence](specs/flashnext/evidence/)):
 
 - **The wire is not your TP=2 limiter** — but an unheld CPU C-state is. Hold
-  `/dev/cpu_dma_latency` at 0 on **both** ends (577 µs → 63–90 µs RTT, free).
+  `/dev/cpu_dma_latency` at the configured budget on **both** ends. **[CORRECTED 2026-08-31 — dotfiles#257: the budget is 100 µs, not 0, and it is NOT free. Holding 0 pins the cores at POLL: ~60 W/box for the last ~62 µs. The C3 block — ~7× of the ~8× effect — is already had at 100 (0.116 ms vs 0.829 ms unheld). Verify with `sudo fleet-postboot-verify`.]**
   RDMA measures ≈+3.4% decode over held TCP here — worth taking, but it means
   unsigned kernel-pinned modules and a coordinated dual reboot, so it's a
   day-2 attended lane in this repo (`host/rdma/`), never the overnight path.

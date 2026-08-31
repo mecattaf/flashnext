@@ -1,5 +1,14 @@
 # MORNING — the operator's first ten minutes
 
+> **⚠ CORRECTED 2026-08-31.** Rails are `rail0`/`rail2` (dotfiles#266), both
+> addressed (#274). The PM QoS doctrine below ("hold at 0") is SUPERSEDED —
+> the fleet holds `pmqosLatencyUs = 100`; holding 0 pins the cores at POLL for
+> ~60 W/box to buy the last ~62 µs, while the C3 block worth ~7× of the win is
+> already had at 100. Item 6's USB4STREAM decision rule is RESOLVED: criterion
+> (1) holds, 8/16 KiB exchange p50 13.67/20.06 µs — see
+> `docs/USB4STREAM-TRANSPORT.md` §5b. Verify fleet state with
+> `sudo fleet-postboot-verify`, not from memory.
+
 > ## ⚠ CORRECTED 2026-08-31 — READ BEFORE ACTING ON THIS DOCUMENT
 >
 > **`handoff/catalog-row.patch` is ALREADY APPLIED. Do not apply it.** Verified
@@ -176,7 +185,7 @@ jq -r '.data.transport_rung'              results/receipts/preflight.json
 ```
 
 Two rungs exist in the unattended ladder, and only two: `rail0-sockets`
-(thunderbolt0, cable A, listed only if its /30 peer answers a 3-packet ping)
+(rail0, cable A, listed only if its /30 peer answers a 3-packet ping)
 and `wire-fallback` (the 5 GbE control wire, terminal, loudly logged). Never
 the second rail, never verbs.
 
@@ -189,7 +198,7 @@ The consequences are exact:
   bring-up. `host/rdma/attended-bringup.md` requires a banked *socket-transport
   benchmark measured over the Thunderbolt rail*; a wire artifact is not it.
 - **Healing rail 0 is the morning's first transport act.** The dark rail is
-  asymmetric — the worker's `thunderbolt0` read NO-CARRIER even after its own
+  asymmetric — the worker's rail 0 read NO-CARRIER even after its own
   clean reboot, so a coordinator reboot alone may not fix it. Branch:
   coordinator reboot → replug cable A → worker reboot → if it still will not
   come up, accept a wire day and re-plan. Re-bank a `rail0-sockets` bench

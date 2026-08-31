@@ -795,7 +795,7 @@ measurement, and routes it to the optimization menu.
 | TCP over 5GbE, 64 B / 4 KB p50 | 60.4 µs / 137.8 µs | measured |
 | TCP over thunderbolt0 | **never measured** | the gap the morning should close first |
 | RDMA vs held TCP, end-to-end decode | +3.4% | the one community precedent |
-| unheld vs held C-state RTT | 577 µs → 63–90 µs | measured, round 1 |
+| unheld vs held C-state RTT | 577 µs → 63–90 µs (at budget 0) | measured, round 1 — SUPERSEDED, see below |
 | single-node community decode (Q4/Q5, llama.cpp) | 27–50 tok/s | not our comparison class — those quants fit one box |
 | single-node CIRU ROCm, 8K cold prefill / decode @ MTP depth 3 | 359 tok/s / 30.8 tok/s | their published results |
 | our TP=2 fp8 pair | **unknown — that is what tonight is for** | |
@@ -904,9 +904,9 @@ run bets its risk budget on MTP rather than on transport.
 **A.4 The reframe worth passing back to that thread: the RDMA method is
 second-order. Three other variables each dominate it.**
 
-1. **C-state hold** — 577 µs → 63–90 µs RTT, an ~8× effect, free, and it
+1. **C-state hold** — 577 µs → 63–90 µs RTT, an ~8× effect, **[CORRECTED 2026-08-31 — dotfiles#257: the budget is 100 µs, not 0, and it is NOT free. Holding 0 pins the cores at POLL: ~60 W/box for the last ~62 µs. The C3 block — ~7× of the ~8× effect — is already had at 100 (0.116 ms vs 0.829 ms unheld). Verify with `sudo fleet-postboot-verify`.]** and it
    applies to *every* transport including plain TCP. Anyone benchmarking
-   transports without holding `/dev/cpu_dma_latency` at 0 on **both** ends is
+   transports without holding `/dev/cpu_dma_latency` at the configured budget on **both** ends is
    measuring their idle governor, not their interconnect.
 2. **Whether the host sits in the critical path** — the same ibverbs stack
    measured 228 µs with a host callback and **105 µs** once a doorbell kernel

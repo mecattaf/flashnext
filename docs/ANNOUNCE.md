@@ -111,7 +111,7 @@ depths (0 / 10240 / 102400), token fingerprints, and the transport rung.
 ### Things we learned that may save you a night
 
 - **The wire is not your TP=2 limiter — an unheld CPU C-state is.** Hold
-  `/dev/cpu_dma_latency` at 0 on *both* ends: 577 µs → 63–90 µs RTT, free.
+  `/dev/cpu_dma_latency` at the configured budget on *both* ends. **[CORRECTED 2026-08-31 — dotfiles#257: the budget is 100 µs, not 0, and it is NOT free. Holding 0 pins the cores at POLL: ~60 W/box for the last ~62 µs. The C3 block — ~7× of the ~8× effect — is already had at 100 (0.116 ms vs 0.829 ms unheld). Verify with `sudo fleet-postboot-verify`.]**
 - **Your fleet's artifact sync will eat your staged weights** if the staged
   copy has no catalog row. It ate ours off both nodes, 185.6 GB × 2, hours
   after the receipts said verified. Declare artifacts before staging them.

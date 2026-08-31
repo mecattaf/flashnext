@@ -116,7 +116,7 @@ systemctl --failed                                  # want: 0 units
 journalctl -b -u fn-rdma-modules -u fn-rdma-ibverbs -o cat | head
 lsmod | grep -E '^thunderbolt|^ib_'                 # patched core (598016), net, ibverbs
 systemctl is-active lowlat-cluster                  # #238: first on-disk boot test
-sudo od -An -tu4 /dev/cpu_dma_latency               # want: 0
+sudo od -An -tu4 /dev/cpu_dma_latency               # want: 100 (dotfiles#257; NOT 0)
 ping -c5 10.99.0.2 && ssh 10.99.9.2 ping -c5 10.99.0.1   # rail 0 IP restored, both ways
 ls /sys/class/infiniband/                           # usb4_rdma0 — and ONLY that
 ssh 10.99.9.2 ls /sys/class/infiniband/             # same on the worker

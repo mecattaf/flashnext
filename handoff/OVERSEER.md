@@ -153,30 +153,14 @@ is GC-rooted at `~/.cache/flashnext-rocm/`.
   are the transport of record until the attended morning A/B. The host-tooling
   worklist task now *requires* this (its acceptance greps for it) — but
   verify `host/fn-env.sh` carries it after the lane runs, and steer if not.
-- **Rail 1 (`thunderbolt1`) is trained but IP-UNCONFIGURED** (169.254.x
-  link-local, no peer; `modules/lowlat-cluster.nix` calls it "TRAINED BUT
-  UNCONFIGURED"). Rail 0 (`thunderbolt0`, 10.99.0.x /30) is the only rail
-  carrying routable IP. The worklist now sets `NCCL_SOCKET_IFNAME` from rails
-  that actually have an IP, so this is handled — **but if TP=2 bootstrap hangs
-  at ~03:00, a peerless rail 1 in the socket list is the first suspect: drop
-  `thunderbolt1`, keep `thunderbolt0`.** Do not add rail 1 back without a
-  peer IP on both ends.
-- **Rail 0 RTT observed band (post-reboot-#2, verified): 96–112 µs avg,
-  loss-free** — above the 63–90 µs earlier reference. Flagged, not blocking
-  (C-state hold 0 both twins, MTU 1500 by design); `fn-preflight.sh`'s
-  latency-hold at serve time is the real gate. Do not chase the delta
-  overnight.
-- **`_GCN_ARCH` one-liner first** inside the built engine:
-  `python -c "import vllm.platforms.rocm as r; print(r._GCN_ARCH, r.on_cdna(), r.on_rdna4())"`.
-- The oracle failure is **loud and at layer construction** — if a serve
-  attempt gets past model construction, the admission patch is engaged; if it
-  raises `No FP8 MoE backend…`, it is not. `VLLM_LOGGING_LEVEL=DEBUG` prints
-  the per-backend elimination table.
-- The two TP ranks must have **byte-identical FN_ env**
-  (`VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY=FN_` is what propagates them).
-- Weights: coordinator source `/mnt/nas/models/weights/…`, worker source
-  `/mnt/library/weights/…` (its own mount of the same library). 131 shards
-  expected; download was in flight at handoff (~60G/173G at 22:30, fast).
+- **CORRECTED 2026-08-31 — the paragraph this replaced is falsified.** The
+  rails are `rail0` (cable A, 10.99.0.x/30) and `rail2` (cable B, 10.99.2.x/30);
+  both are addressed (dotfiles#266, #274). `thunderbolt0`/`thunderbolt1` do not
+  exist. The old remedy — "strip `thunderbolt1`, keep `thunderbolt0`" — would,
+  followed literally mid-incident, pin a nonexistent interface and drop the run
+  silently onto the 5 GbE wire. If you must reduce to one rail during an
+  incident, **drop `rail2` and keep `rail0`**, and verify with
+  `sudo fleet-postboot-verify` (dotfiles) rather than by name.
 
 ## Hardware red lines
 

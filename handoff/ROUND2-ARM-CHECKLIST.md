@@ -46,7 +46,7 @@ thunderbolt0 read NO-CARRIER on an already-rebooted 7.2.2 node), so the
 coordinator reboot alone may not heal rail 0:
 
 - `uname -r` → 7.2.2; `systemctl is-active lowlat-cluster` active on both
-  nodes; `/dev/cpu_dma_latency` reads 0; `/dev/tbstream*` re-provisioned.
+  nodes; `/dev/cpu_dma_latency` reads the configured budget (100, dotfiles#257 — NOT 0); `/dev/tbstream*` re-provisioned.
   Expect the fn-rdma units FAILED — loud but harmless (nothing is staged
   for 7.2.2; that is the attended morning item).
 - Rail check BOTH directions: `ping -c3 10.99.0.2` AND
