@@ -1,43 +1,43 @@
 {
  "step": "preflight",
  "status": "pass",
- "ts": "2026-08-31T08:14:07",
+ "ts": "2026-08-31T16:08:52",
  "data": {
   "env_byte_diff": "pass",
   "rails_chosen": [
-   "thunderbolt0"
+   "rail0"
   ],
   "transport_rung": "rail0-sockets",
   "latency_budget_us": 200,
   "latency_hold": {
    "coordinator": {
     "unit": "active",
-    "cpu_dma_latency": "0"
+    "cpu_dma_latency": "100"
    },
    "worker": {
     "unit": "active",
-    "cpu_dma_latency": "0"
+    "cpu_dma_latency": "100"
    }
   },
   "rails": {
-   "thunderbolt0": {
+   "rail0": {
     "coordinator": {
      "speed_mbps": "40000",
-     "rtt_us": "127"
+     "rtt_us": "145"
     },
     "worker": {
      "speed_mbps": "40000",
-     "rtt_us": "102"
+     "rtt_us": "126"
     }
    },
-   "thunderbolt1": {
+   "rail2": {
     "coordinator": {
      "speed_mbps": "40000",
-     "rtt_us": "no-peer-ip"
+     "rtt_us": "119"
     },
     "worker": {
      "speed_mbps": "40000",
-     "rtt_us": "no-peer-ip"
+     "rtt_us": "117"
     }
    }
   }

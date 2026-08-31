@@ -1,7 +1,7 @@
 {
  "step": "usb4stream",
  "status": "pass",
- "ts": "2026-08-31T15:43:21",
+ "ts": "2026-08-31T14:37:40",
  "data": {
   "serve_up": false,
   "loop": "python",
@@ -44,7 +44,7 @@
    "reachable": true,
    "ping": true,
    "neigh_lladdr": "02:4e:e0:7d:e4:e9",
-   "neigh_state": "REACHABLE"
+   "neigh_state": "DELAY"
   },
   "configfs": {
    "coordinator": "/sys/kernel/config/thunderbolt/stream/0-2.1/fn0",
@@ -66,48 +66,48 @@
   "peer_throttling": "2048",
   "rtt_us": {
    "64": {
-    "p50": 16.17,
-    "p99": 30.027,
+    "p50": 16.191,
+    "p99": 24.857,
     "iters": 500
    },
    "4096": {
-    "p50": 25.118,
-    "p99": 26.179,
+    "p50": 24.726,
+    "p99": 36.949,
     "iters": 500
    },
    "16384": {
-    "p50": 50.696,
-    "p99": 52.981,
+    "p50": 49.784,
+    "p99": 55.364,
     "iters": 500
    },
    "65536": {
-    "p50": 144.283,
-    "p99": 159.602,
+    "p50": 141.606,
+    "p99": 157.146,
     "iters": 500
    }
   },
   "exchange_us": {
    "8192": {
-    "p50": 13.957,
-    "p99": 21.821,
+    "p50": 13.666,
+    "p99": 23.133,
     "iters": 500
    },
    "16384": {
-    "p50": 20.138,
-    "p99": 23.094,
+    "p50": 20.058,
+    "p99": 25.588,
     "iters": 500
    },
    "65536": {
-    "p50": 60.264,
-    "p99": 70.063,
+    "p50": 58.47,
+    "p99": 68.879,
     "iters": 500
    }
   },
   "throughput_mb_s": {
-   "coordinator_to_peer": 1170.2,
-   "peer_to_coordinator": 1156.4
+   "coordinator_to_peer": 1248.3,
+   "peer_to_coordinator": 1153.2
   },
-  "wall_s": 1.46,
+  "wall_s": 1.465,
   "peer_report": {
    "role": "peer",
    "outcome": "ok",
@@ -127,7 +127,7 @@
     "coordinator": 100,
     "worker": 100
    },
-   "note": "read from /dev/cpu_dma_latency on both nodes immediately before and again after the run, by the operator; recorded so this figure, unlike the retired 14.3 us one, names its power regime"
+   "note": "read from /dev/cpu_dma_latency on both nodes immediately before provisioning and again after the run, by the operator; recorded so this figure, unlike the retired 14.3 us one, names its power regime"
   }
  }
 }

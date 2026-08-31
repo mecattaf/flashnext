@@ -1,0 +1,201 @@
+{
+ "rail": "rail0",
+ "cable": "A",
+ "server_listen": [
+  "10.99.0.2",
+  45711
+ ],
+ "client": {
+  "label": "rail0",
+  "local_sockaddr": [
+   "10.99.0.1",
+   49479
+  ],
+  "peer_sockaddr": [
+   "10.99.0.2",
+   45711
+  ],
+  "wall_s": 3.14,
+  "latency": [
+   {
+    "size_b": 64,
+    "iters": 3000,
+    "warmup": 1000,
+    "rtt_us": {
+     "min": 45.32,
+     "p50": 130.49,
+     "p90": 141.65,
+     "p99": 207.91,
+     "p999": 208.19,
+     "max": 217.19,
+     "mean": 133.88,
+     "stdev": 25.1
+    },
+    "one_way_us_p50": 65.24,
+    "hist_25us": {
+     "25": 2,
+     "50": 71,
+     "75": 111,
+     "100": 115,
+     "125": 2413,
+     "150": 21,
+     "175": 128,
+     "200": 139
+    }
+   },
+   {
+    "size_b": 4096,
+    "iters": 3000,
+    "warmup": 1000,
+    "rtt_us": {
+     "min": 49.58,
+     "p50": 130.71,
+     "p90": 300.97,
+     "p99": 354.21,
+     "p999": 379.13,
+     "max": 379.65,
+     "mean": 179.93,
+     "stdev": 77.89
+    },
+    "one_way_us_p50": 65.35,
+    "hist_25us": {
+     "25": 1,
+     "50": 65,
+     "75": 8,
+     "100": 218,
+     "125": 1650,
+     "150": 7,
+     "175": 35,
+     "200": 202,
+     "225": 120,
+     "250": 76,
+     "275": 31,
+     "300": 453,
+     "325": 3,
+     "350": 126,
+     "375": 5
+    }
+   },
+   {
+    "size_b": 16384,
+    "iters": 3000,
+    "warmup": 1000,
+    "rtt_us": {
+     "min": 108.42,
+     "p50": 210.08,
+     "p90": 313.86,
+     "p99": 360.5,
+     "p999": 386.43,
+     "max": 401.49,
+     "mean": 218.73,
+     "stdev": 90.59
+    },
+    "one_way_us_p50": 105.04,
+    "hist_25us": {
+     "100": 497,
+     "125": 954,
+     "150": 19,
+     "175": 16,
+     "200": 34,
+     "225": 74,
+     "250": 28,
+     "275": 7,
+     "300": 1233,
+     "325": 45,
+     "350": 87,
+     "375": 5,
+     "400": 1
+    }
+   },
+   {
+    "size_b": 65536,
+    "iters": 2000,
+    "warmup": 1000,
+    "rtt_us": {
+     "min": 302.57,
+     "p50": 329.49,
+     "p90": 341.28,
+     "p99": 411.85,
+     "p999": 437.29,
+     "max": 437.33,
+     "mean": 335.52,
+     "stdev": 16.57
+    },
+    "one_way_us_p50": 164.75,
+    "hist_25us": {
+     "300": 46,
+     "325": 1853,
+     "350": 6,
+     "375": 25,
+     "400": 68,
+     "425": 2
+    }
+   }
+  ],
+  "throughput": [],
+  "client_netdev_delta": {
+   "enp191s0": {
+    "rx": 0,
+    "tx": 1,
+    "rx_bytes": 0,
+    "tx_bytes": 66
+   },
+   "rail0": {
+    "rx": 94008,
+    "tx": 29014,
+    "rx_bytes": 280698792,
+    "tx_bytes": 280699108
+   },
+   "wlp192s0": {
+    "rx": 13,
+    "tx": 15,
+    "rx_bytes": 1763,
+    "tx_bytes": 3052
+   }
+  }
+ },
+ "server": {
+  "role": "server",
+  "outcome": "ok",
+  "local": [
+   "10.99.0.2",
+   45711
+  ],
+  "peer": [
+   "10.99.0.1",
+   49479
+  ],
+  "netdev_delta": {
+   "enp191s0": {
+    "rx": 1,
+    "tx": 0,
+    "rx_bytes": 66,
+    "tx_bytes": 0
+   },
+   "rail0": {
+    "rx": 94011,
+    "tx": 29010,
+    "rx_bytes": 280699021,
+    "tx_bytes": 280698660
+   },
+   "wlp192s0": {
+    "rx": 4,
+    "tx": 7,
+    "rx_bytes": 424,
+    "tx_bytes": 2358
+   }
+  }
+ },
+ "client_cmd": "/etc/profiles/per-user/tom/bin/python3 /home/tom/mecattaf/flashnext/bench/socket-transport-bench.py --role client --bind-src 10.99.0.1 --connect 10.99.0.2 --port 45711 --sizes 64,4096,16384,65536 --iters 3000 --warmup 1000 --throughput-bytes 0 --label rail0",
+ "server_cmd": "ssh -o BatchMode=yes -o ConnectTimeout=5 10.99.9.2 python3 - --role server --bind 10.99.0.2 --port 45711  (< bench/socket-transport-bench.py)",
+ "host": "coordinator",
+ "kernel": "7.2.2",
+ "ts": "2026-08-31T15:38:59",
+ "pm_qos": {
+  "cpu_dma_latency_us": {
+   "coordinator": 100,
+   "worker": 100
+  },
+  "note": "read from /dev/cpu_dma_latency on both nodes before (P0.4/P0.5) and after (P1.3) the sweep; all four readings 100 us. Stamped post-run per the quoting rule; the P1.1 driver does not read the device itself."
+ }
+}
