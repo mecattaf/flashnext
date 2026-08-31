@@ -4,19 +4,31 @@
 # Order is load-bearing (the reap-then-gate doctrine of the ds4 estate's
 # ds4-cluster-restart.sh, specs/flashnext/evidence/ds4-vllm-manifest.md §5.5):
 #
-#   1. REAP stranded serve processes on BOTH nodes first, then GATE on zero
+#   1. ARBITRATE THE MODEL-SWAP PROXY on both twins before anything else. The
+#      always-on proxy on :9292 holds no GPU at rest but spawns a backend on
+#      ANY request to that port, out of the same 125 GB unified pool this
+#      serve is about to hold at ~78 GiB/rank. It goes first because it can
+#      race even the reap (host/fn-swap-arbitrate.sh).
+#   2. THE TP=2 GUARDS — the eight parity and divisibility assertions plus the
+#      selection-time expert-sharding checks, all arithmetic over the
+#      checkpoint header, all fail-closed, all BEFORE the first launch
+#      (host/fn-tp2-guards.py). A bad split on this stack does not crash: it
+#      serves fluent wrong output, which no later receipt can catch.
+#   3. REAP stranded serve processes on BOTH nodes, then GATE on zero
 #      residue. Stopping a supervising unit does not kill the `vllm serve`
 #      behind it; repeated restarts strand one husk each, holding the port.
-#   2. Containers on both nodes — the worker over ssh on the WIRE
+#   4. Containers on both nodes — the worker over ssh on the WIRE
 #      (10.99.9.2); the rails carry tensors only, never control traffic.
-#   3. Ray head on the coordinator, worker join; the worker python pool is
+#   5. Ray head on the coordinator, worker join; the worker python pool is
 #      capped small (RAY_NUM_CPUS, host/fn-env.sh).
-#   4. A hard two-GPU gate BEFORE serve — if ray never reports 2.0 GPU, we
+#   6. A hard two-GPU gate BEFORE serve — if ray never reports 2.0 GPU, we
 #      abort loud rather than serve at TP=1.
-#   5. The TP=2 eager serve, then a wait-for-reality API poll.
+#   7. The TP=2 serve, then a wait-for-reality API poll.
 #
 # Failure cannot strand ranks: flashnext-pair.service runs this as a oneshot
-# with ExecStopPost=fn-cluster-down.sh, so even a failed bring-up tears down.
+# with ExecStopPost=fn-cluster-down.sh, so even a failed bring-up tears down —
+# and the model-swap proxy is put back to its arrival state on every exit
+# path, this script's own failure exits included (the trap below).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +38,95 @@ source "$SCRIPT_DIR/fn-env.sh"
 log() { echo "fn-cluster-up: $*" >&2; }
 worker() { ssh "$FN_WORKER_HOST" "$@"; }
 
-# --- 1. reap stranded serve processes, then gate on zero residue -------------
+# --- 1. arbitrate the model-swap proxy on both twins --------------------------
+# THE RACE THIS CLOSES: the always-on model-swap proxy fronting the single-node
+# model pool listens on :9292 and is idle at rest — but a single request to
+# that port (three live doors: the tailnet, the house LAN, and a local
+# utility-model wrapper) spawns a backend that allocates out of the very same
+# 125 GB unified pool this serve holds. Until now the two systems were
+# mutually blind: this file carried no reference to that proxy or to :9292 and
+# the proxy carries none to us.
+#
+# A STOP, NEVER A DISABLE — the unit stays enabled and the morning boots into
+# its normal roster. The arrival state is recorded in
+# $FN_STATE_DIR/swap-arbitration.json (folded into the tp2 receipt by
+# scripts/run-tp2.sh) so the morning can tell whether the night took the
+# roster down or found it down.
+# The trap is armed BEFORE the stop, not after: a stop that fails halfway —
+# coordinator down, worker unreachable — must still put back what it took.
+# ExecStopPost covers the unit case, but this script is also run directly by
+# scripts/run-tp2.sh, where a FATAL below would otherwise leave the morning
+# roster down with nobody to put it back.
+restore_swap_proxy() {
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "bring-up failed (exit $rc); restoring the model-swap proxy to its arrival state"
+    bash "$SCRIPT_DIR/fn-swap-arbitrate.sh" restore || true
+  fi
+  return "$rc"
+}
+trap restore_swap_proxy EXIT
+
+log "arbitrate: model-swap proxy on :${FN_SWAP_PORT:-9292}, both twins"
+bash "$SCRIPT_DIR/fn-swap-arbitrate.sh" stop
+
+# --- 2. the TP=2 guards: fail loud and early, before the first launch ---------
+# The serve argv is built ONCE, here, and handed to BOTH the guard and the
+# serve, so the thing that is checked is the thing that runs. Same rule as the
+# `vllm serve` line itself: NO '#' comments inside the backslash continuation
+# below — one would silently comment out every remaining argument, and
+# `bash -n` still calls the file valid.
+#
+# --enable-expert-parallel is LOAD-BEARING, not a tuning knob. The routed
+# experts are block-FP8 at 128x128 with a 640-wide intermediate: a
+# tensor-parallel MoE would slice that to 320 per rank, which is not a whole
+# number of blocks, so each rank's slice would mix two neighbouring blocks'
+# scales and be SILENTLY WRONG. Expert parallelism shards at SELECTION and
+# moves whole experts instead, which is the only split these bytes admit.
+# fn-tp2-guards.py asserts exactly that (A6 and S1) against this argv.
+#
+# --limit-mm-per-prompt image/video 0: text-only serve, operator-ratified.
+# The vision encoder profiling pass materializes a 65536² fp32 SDPA matrix
+# (= 256 GiB exactly) on gfx1151 — no flash ViT kernel, math fallback. NOT
+# --skip-mm-profiling: a real image at serve time hits the same wall.
+#
+# No --enforce-eager: fn-env.sh's unconditional VLLM_PLE_MMAP=1 + the fork's
+# check_cudagraph_safety guard REFUSE plain eager with PLE mmap — first light
+# must run VLLM_COMPILE + PIECEWISE with the mmap op as a split boundary,
+# the mode the successful proxy boot used (spec P10; DAYRUN-NOTES pre-arm).
+#
+# --max-num-batched-tokens 2048: QSA indexer workspace scales with
+# batch × context (ds4 precedent: 512 at 512K ctx). Start 2048 at 256K,
+# drop to 512 on OOM.
+#
+# --kv-cache-memory-bytes: pin the KV/state pool at 12 GiB (FN_KV_CACHE_BYTES,
+# fn-env.sh) so the GDN slot pool + paged KV land deterministically inside
+# the P11 residency bound instead of floating with gpu-memory-utilization.
+#
+# --max-num-seqs: cap the GDN state slots (fn-env.sh FN_MAX_SEQS; the engine
+# default of 256 preallocates ~14 GiB/rank).
+#
+# FN_SPEC_ARGS is EMPTY by default: first light is spec-off (the identity
+# oracle's baseline). Speculative promotion is a morning env flip, e.g.
+# FN_SPEC_ARGS="--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'".
+SERVE_ARGS="--served-model-name $FN_SERVED_NAME \
+  --host 0.0.0.0 \
+  --port $FN_PORT \
+  --tensor-parallel-size 2 \
+  --enable-expert-parallel \
+  --distributed-executor-backend ray \
+  --gpu-memory-utilization $FN_GPU_UTIL \
+  --max-model-len $FN_MAX_CTX \
+  --limit-mm-per-prompt '{\"image\":0,\"video\":0}' \
+  --max-num-batched-tokens ${FN_MAX_BATCHED_TOKENS:-2048} \
+  --kv-cache-memory-bytes ${FN_KV_CACHE_BYTES:-12884901888} \
+  --max-num-seqs ${FN_MAX_SEQS:-32} \
+  ${FN_SPEC_ARGS:-}"
+
+log "guards: the eight parity assertions and the sharding checks (arithmetic only, no load)"
+python3 "$SCRIPT_DIR/fn-tp2-guards.py" --serve-argv "$SERVE_ARGS"
+
+# --- 3. reap stranded serve processes, then gate on zero residue -------------
 # The serve process tree is visible from the host /proc even when it runs
 # inside a podman container, so we reap host-side on both nodes.
 # reap_serve_node is defined in fn-env.sh (shared with bench/run-matrix.sh's
@@ -46,7 +146,7 @@ if [ "$residue" -ne 0 ]; then
 fi
 log "reap gate passed: zero residue on both nodes"
 
-# --- 2. containers on both nodes ---------------------------------------------
+# --- 4. containers on both nodes ---------------------------------------------
 # The env file is built PER NODE by sourcing fn-env.sh there — EXCEPT the
 # transport decision: NCCL_SOCKET_IFNAME and FN_TRANSPORT_RUNG are decided
 # ONCE, on the coordinator, and injected into the worker's sourcing as
@@ -59,6 +159,28 @@ mkdir -p "$FN_STATE_DIR"
 LOCAL_ENV_FILE="$FN_STATE_DIR/container-env.list"
 ( set -a; source "$SCRIPT_DIR/fn-env.sh" >/dev/null; env ) \
   | grep -E "$ENV_FILTER" | LC_ALL=C sort > "$LOCAL_ENV_FILE"
+
+# VERIFY the compiler-cache pinning; do NOT rewrite it. ENV_FILTER above
+# already carries TORCHINDUCTOR_ and TRITON_, fn-env.sh points both at
+# $FN_STATE_DIR (never tmpfs, or the first bring-up after a boot spends ~25
+# min in LLVM), and FN_STATE_DIR is bind-mounted at the SAME absolute path on
+# both nodes below. That is correct today. What is checked here is that it
+# STAYS correct: a filter edit that dropped either prefix would leave the two
+# ranks compiling into different directories with nothing to say so.
+for cache_var in TORCHINDUCTOR_CACHE_DIR TRITON_CACHE_DIR; do
+  cache_val="$(grep -E "^${cache_var}=" "$LOCAL_ENV_FILE" | head -n1 | cut -d= -f2-)"
+  if [ -z "$cache_val" ]; then
+    log "FATAL: $cache_var is missing from the container env file; the ENV_FILTER no longer carries it and both ranks would recompile into a tmpfs default"
+    exit 1
+  fi
+  case "$cache_val" in
+    "$FN_STATE_DIR"/*) ;;
+    *)
+      log "FATAL: $cache_var is '$cache_val', outside the bind-mounted state directory $FN_STATE_DIR"
+      exit 1 ;;
+  esac
+  log "cache pin verified: $cache_var=$cache_val (under the state dir, bind-mounted identically on both nodes)"
+done
 
 log "image: ensure the worker carries $FN_IMAGE"
 bash "$SCRIPT_DIR/fn-image-ship.sh"
@@ -99,7 +221,7 @@ worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true \
     --env-file '$REMOTE_TMP/env.list' \
     '$FN_IMAGE' sleep infinity >/dev/null"
 
-# --- 3. ray: distributed head on the coordinator, worker join -----------------
+# --- 5. ray: distributed head on the coordinator, worker join -----------------
 log "ray head on the coordinator"
 podman exec "$FN_CONTAINER" ray start --head \
   --port "$FN_RAY_PORT" \
@@ -111,7 +233,7 @@ worker "podman exec '$FN_CONTAINER' ray start \
   --address='$FN_HEAD_IP:$FN_RAY_PORT' \
   --num-cpus '$RAY_NUM_CPUS'" >/dev/null
 
-# --- 4. hard two-GPU gate before serve ----------------------------------------
+# --- 6. hard two-GPU gate before serve ----------------------------------------
 gpus_total=""
 for _ in $(seq 1 120); do
   gpus_total="$(podman exec "$FN_CONTAINER" ray status 2>/dev/null \
@@ -130,49 +252,13 @@ case "$gpus_total" in
     ;;
 esac
 
-# --- 5. the serve: TP=2, compiled ---------------------------------------------
-# Do not add comments inside the backslash-continued `vllm serve` command
-# below: a '#' there silently comments out every remaining argument, and
-# `bash -n` still reports the file as valid.
-#
-# No --enforce-eager: fn-env.sh's unconditional VLLM_PLE_MMAP=1 + the fork's
-# check_cudagraph_safety guard REFUSE plain eager with PLE mmap — first light
-# must run VLLM_COMPILE + PIECEWISE with the mmap op as a split boundary,
-# the mode the successful proxy boot used (spec P10; DAYRUN-NOTES pre-arm).
-#
-# --limit-mm-per-prompt image/video 0: text-only serve, operator-ratified.
-# The vision encoder profiling pass materializes a 65536² fp32 SDPA matrix
-# (= 256 GiB exactly) on gfx1151 — no flash ViT kernel, math fallback. NOT
-# --skip-mm-profiling: a real image at serve time hits the same wall.
-#
-# --max-num-batched-tokens 2048: QSA indexer workspace scales with
-# batch × context (ds4 precedent: 512 at 512K ctx). Start 2048 at 256K,
-# drop to 512 on OOM.
-#
-# --kv-cache-memory-bytes: pin the KV/state pool at 12 GiB (FN_KV_CACHE_BYTES,
-# fn-env.sh) so the GDN slot pool + paged KV land deterministically inside
-# the P11 residency bound instead of floating with gpu-memory-utilization.
-#
-# --max-num-seqs: cap the GDN state slots (fn-env.sh FN_MAX_SEQS; the engine
-# default of 256 preallocates ~14 GiB/rank).
-#
-# FN_SPEC_ARGS is EMPTY by default: first light is spec-off (the identity
-# oracle's baseline). Speculative promotion is a morning env flip, e.g.
-# FN_SPEC_ARGS="--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'".
-log "serving $FN_MODEL_DIR as '$FN_SERVED_NAME' at TP=2 (compiled, text-only)"
-podman exec -d "$FN_CONTAINER" bash -c "exec vllm serve $FN_MODEL_DIR \
-  --served-model-name $FN_SERVED_NAME \
-  --host 0.0.0.0 \
-  --port $FN_PORT \
-  --tensor-parallel-size 2 \
-  --distributed-executor-backend ray \
-  --gpu-memory-utilization $FN_GPU_UTIL \
-  --max-model-len $FN_MAX_CTX \
-  --limit-mm-per-prompt '{\"image\":0,\"video\":0}' \
-  --max-num-batched-tokens ${FN_MAX_BATCHED_TOKENS:-2048} \
-  --kv-cache-memory-bytes ${FN_KV_CACHE_BYTES:-12884901888} \
-  --max-num-seqs ${FN_MAX_SEQS:-32} \
-  ${FN_SPEC_ARGS:-} \
+# --- 7. the serve: TP=2, compiled, expert-parallel ----------------------------
+# SERVE_ARGS is built at step 2 above, together with the reasoning for every
+# flag in it, and fn-tp2-guards.py has already asserted this exact argv
+# against the checkpoint header. Do not inline a flag here: a flag the guard
+# never saw is a split nobody checked.
+log "serving $FN_MODEL_DIR as '$FN_SERVED_NAME' at TP=2 (compiled, expert-parallel, text-only)"
+podman exec -d "$FN_CONTAINER" bash -c "exec vllm serve $FN_MODEL_DIR $SERVE_ARGS \
   > '$FN_STATE_DIR/serve.log' 2>&1"
 
 # Wait for reality, not for the target's word (the fleet's library-reachable

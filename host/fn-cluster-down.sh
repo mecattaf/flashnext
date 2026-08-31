@@ -7,6 +7,13 @@
 # wrapper. Tolerates broken config, dead ssh, and half-dead containers.
 # ALWAYS exits 0 — a teardown that fails loud is still a teardown the unit
 # must be able to complete.
+#
+# It is also the ONLY place the model-swap proxy on :9292 comes back. The
+# bring-up stops that proxy on both twins so a swap-in cannot land mid-serve
+# and allocate out of the same unified pool; this file puts it back to its
+# ARRIVAL state on every exit path — clean stop, failed bring-up, or crash —
+# because StopPost runs when ExecStart itself failed. A proxy that was already
+# down when we arrived stays down; nothing here ever disables a unit.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,6 +61,15 @@ log "container removal: coordinator"
 podman rm -f "$FN_CONTAINER" >/dev/null 2>&1 || true
 log "container removal: worker"
 worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true"
+
+# --- restore the model-swap proxy, last, on every exit path -------------------
+# LAST on purpose: the containers are gone and the ranks have released the
+# unified pool, so the proxy comes back to a machine that can actually serve
+# a swap-in. fn-swap-arbitrate.sh reads the arrival record the bring-up wrote
+# and starts the unit only on the twins where it was running when we arrived;
+# it always exits 0, so it can never block this teardown from completing.
+log "restore: model-swap proxy on :${FN_SWAP_PORT:-9292} to its arrival state, both twins"
+bash "$SCRIPT_DIR/fn-swap-arbitrate.sh" restore || true
 
 log "teardown complete"
 exit 0
