@@ -170,6 +170,12 @@ export RAY_memory_monitor_refresh_ms="${RAY_memory_monitor_refresh_ms:-0}"
 # 32-thread box that is over a gigabyte vLLM never touches. Cap the pool
 # small; fn-cluster-up.sh passes this as --num-cpus on both nodes.
 export RAY_NUM_CPUS="${RAY_NUM_CPUS:-4}"
+# One GPU per node, DECLARED rather than autodetected: ray's AMD accelerator
+# probe does not enumerate this gfx1151 APU, so `ray start` without it brings up
+# a cluster with no GPU resource at all and fn-cluster-up.sh's two-GPU gate
+# refuses to serve. RAY_-prefixed so it rides the doctrine env both ranks
+# byte-compare in fn-preflight.sh.
+export RAY_NUM_GPUS="${RAY_NUM_GPUS:-1}"
 
 # --- the table path ------------------------------------------------------------
 # Serve the engram table from NVMe via mmap: page-cache faults serve gathers,

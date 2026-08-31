@@ -222,16 +222,25 @@ worker "podman rm -f '$FN_CONTAINER' >/dev/null 2>&1 || true \
     '$FN_IMAGE' sleep infinity >/dev/null"
 
 # --- 5. ray: distributed head on the coordinator, worker join -----------------
+# --num-gpus is DECLARED, not autodetected. Ray's AMD accelerator probe does
+# not enumerate this gfx1151 APU: measured in the serve image with /dev/kfd and
+# /dev/dri attached, `ray status` printed CPU/memory/object_store and NO GPU row
+# at all, while torch in the same container reported cuda available, count 1.
+# The two-GPU gate below then read '' and refused to serve. Declaring one GPU
+# per node makes ray report 1.0 each (2.0 cluster-wide) and a num_gpus=1 remote
+# task really does acquire the device (AMD Radeon 8060S Graphics).
 log "ray head on the coordinator"
 podman exec "$FN_CONTAINER" ray start --head \
   --port "$FN_RAY_PORT" \
   --num-cpus "$RAY_NUM_CPUS" \
+  --num-gpus "$RAY_NUM_GPUS" \
   --include-dashboard=false >/dev/null
 log "ray join from the worker (dials the fleet identity $FN_HEAD_IP on the wire)"
 # --include-dashboard is head-only: ray PANICs if it is passed to a worker.
 worker "podman exec '$FN_CONTAINER' ray start \
   --address='$FN_HEAD_IP:$FN_RAY_PORT' \
-  --num-cpus '$RAY_NUM_CPUS'" >/dev/null
+  --num-cpus '$RAY_NUM_CPUS' \
+  --num-gpus '$RAY_NUM_GPUS'" >/dev/null
 
 # --- 6. hard two-GPU gate before serve ----------------------------------------
 gpus_total=""
