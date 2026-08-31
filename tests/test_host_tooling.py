@@ -55,7 +55,10 @@ class HostTooling(unittest.TestCase):
             "export NCCL_IB_DISABLE=1",
             "export VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY=FN_",
             "export VLLM_PLE_MMAP=1",
-            "thunderbolt0",
+            # Cable-bound rail name (dotfiles#266). The probe-order names
+            # thunderbolt0/thunderbolt1 flipped across reboots and no longer
+            # exist; asserting them here made the CORRECT fix fail acceptance.
+            "rail0",
         ):
             self.assertIn(needle, self.env,
                           f"doctrine line missing from fn-env.sh: {needle}")
@@ -64,12 +67,22 @@ class HostTooling(unittest.TestCase):
         # The rail list must be computed from `ip -br addr` at env time; the
         # two-rail hardcode is exactly the wrong code that passes the grep.
         self.assertIn("ip -br", self.env)
-        self.assertNotIn("NCCL_SOCKET_IFNAME=thunderbolt0,thunderbolt1",
-                         self.env)
+        self.assertNotIn("NCCL_SOCKET_IFNAME=rail0,rail2", self.env)
         self.assertNotRegex(
             self.env,
-            r"^\s*export NCCL_SOCKET_IFNAME=thunderbolt",
+            r"^\s*export NCCL_SOCKET_IFNAME=rail",
             "NCCL_SOCKET_IFNAME must be computed per node, never hardcoded")
+        # The retired probe-order names must not reappear in EXECUTABLE code.
+        # They are still legitimately discussed in comments — the rename
+        # rationale at fn-env.sh:102, and the ds4 estate's own
+        # GLOO_SOCKET_IFNAME=thunderbolt0 which we deliberately do not copy —
+        # so strip comments before asserting rather than banning the word.
+        code = "\n".join(
+            line for line in self.env.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        self.assertNotIn("thunderbolt0", code)
+        self.assertNotIn("thunderbolt1", code)
         # A rail without a routable peer IP must be excluded (link-local
         # 169.254/16 filtered), and the choice must be logged.
         self.assertIn("169\\.254", self.env)

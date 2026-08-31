@@ -5,7 +5,12 @@
 #      diverge (VLLM_RAY_EXTRA_ENV_VAR_PREFIXES_TO_COPY leans on the base
 #      doctrine being identical on both nodes);
 #   2. latency-hold device read on BOTH ends — /dev/cpu_dma_latency must read
-#      0 with the lowlat-cluster unit active (dotfiles-observed.md §1.2);
+#      the CONFIGURED budget with the lowlat-cluster unit active, and both
+#      ends must read the SAME value. The budget is dotfiles' pmqosLatencyUs
+#      (default 100 since dotfiles#257); override with FN_PMQOS_BUDGET for the
+#      latency A/B arm that runs at 1. It is NOT 0 any more: holding 0 pins
+#      the cores at POLL, which bought the last ~62 us for ~60 W/box, while
+#      the C3 block — worth ~7x of the win — is already had at 100.
 #   3. per-rail link-speed record on both nodes;
 #   4. round-trip probe on both rails from both ends, against the fleet
 #      latency budget (200 us default).
@@ -92,14 +97,30 @@ check_hold() {  # $1 = node label, $2 = "<unit>|<device-value>"
     *) fail "latency hold on $node: lowlat-cluster is '$unit' (must be active)"; return ;;
   esac
   case "$val" in
-    0) note "latency hold on $node: held (device reads 0)" ;;
+    "$FN_PMQOS_BUDGET") note "latency hold on $node: held at the configured budget (device reads $val us)" ;;
     unreadable) note "latency hold on $node: unit active but /dev/cpu_dma_latency unreadable here" ;;
-    *) fail "latency hold on $node: device reads '$val' (held figure is 0)"; return ;;
+    *) fail "latency hold on $node: device reads '$val' us, expected $FN_PMQOS_BUDGET (set FN_PMQOS_BUDGET if this run is a deliberate A/B arm; do NOT 'fix' this by reverting pmqosLatencyUs to 0)"; return ;;
   esac
 }
 
-check_hold coordinator "$(latency_hold_probe)"
-check_hold worker "$(worker "$(declare -f latency_hold_probe); latency_hold_probe")"
+# The budget the fleet is configured for. dotfiles modules/lowlat-cluster.nix
+# option pmqosLatencyUs, default 100. Export FN_PMQOS_BUDGET=1 to preflight the
+# C1-only arm of the transport A/B.
+FN_PMQOS_BUDGET="${FN_PMQOS_BUDGET:-100}"
+record "pmqos_budget_expected" "$FN_PMQOS_BUDGET"
+
+_hold_coordinator="$(latency_hold_probe)"
+_hold_worker="$(worker "$(declare -f latency_hold_probe); latency_hold_probe")"
+check_hold coordinator "$_hold_coordinator"
+check_hold worker "$_hold_worker"
+
+# Both ends must agree. A hold applied on only one node measures ~468 us and
+# reads as "the knob did nothing" — the failure that cost dotfiles#238 a day.
+_val_coordinator="${_hold_coordinator##*|}"
+_val_worker="${_hold_worker##*|}"
+if [ "$_val_coordinator" != "$_val_worker" ]; then
+  fail "latency hold split-brain: coordinator reads '$_val_coordinator' us, worker reads '$_val_worker' us — a one-sided hold measures ~468 us and looks like the knob did nothing"
+fi
 
 # --- 3. per-rail link-speed record, both nodes ---------------------------------
 rail_speeds() {  # emits "<rail> <speed-Mb/s>|absent" lines for the two rails

@@ -240,10 +240,11 @@ export NCCL_TIMEOUT_MS="${NCCL_TIMEOUT_MS:-2400000}"
 # GLOO_SOCKET_IFNAME is a single interface-name lookup — a comma in it is not
 # a list, it is a name no interface has, and gloo fails on it. So the
 # rail-fallback branch below must take ${VAR%%,*}: fn_choose_rails above
-# accumulates `chosen="${chosen:+$chosen,}$rail"` and WILL emit
-# `thunderbolt0,thunderbolt1` the day rail 1 gets a /30 (dotfiles
-# modules/lowlat-cluster.nix parks it today; the moment it is unparked this
-# is live). NEVER point this at `lo` either: the fleet identity 10.99.9.x/32
+# accumulates `chosen="${chosen:+$chosen,}$rail"` and emits `rail0,rail2` on
+# any healthy day — both rails carry a /30 since dotfiles#274 — so this
+# truncation is exercised on EVERY run, not on some future day. It was
+# written as a dormant future case when rail 2 was still link-local; it is
+# the live path now. NEVER point this at `lo` either: the fleet identity 10.99.9.x/32
 # lives there beside 127.0.0.1 and gloo would be free to pick the loopback all
 # over again — fn-cluster-up.sh rejects `lo` explicitly for that reason.
 export FN_WIRE_IFNAME="${FN_WIRE_IFNAME:-enp191s0}"
